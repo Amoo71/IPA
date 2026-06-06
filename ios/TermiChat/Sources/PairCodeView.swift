@@ -6,6 +6,7 @@ struct PairCodeView: View {
     let code: String
     @EnvironmentObject var wa: WhatsAppBridge
     @State private var blink = false
+    @State private var requestingNew = false
 
     /// WhatsApp shows the 8-char code as "XXXX-XXXX".
     private var formatted: String {
@@ -15,8 +16,12 @@ struct PairCodeView: View {
         return "\(c[..<i])-\(c[i...])"
     }
 
+    private var logText: String {
+        wa.logs.isEmpty ? "// no logs yet" : wa.logs.joined(separator: "\n")
+    }
+
     var body: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: 18) {
             Spacer()
 
             VStack(spacing: 4) {
@@ -28,6 +33,7 @@ struct PairCodeView: View {
                     .foregroundColor(Theme.textDim)
             }
 
+            // Code box
             Text(formatted)
                 .font(Theme.mono(34, .bold))
                 .foregroundColor(Theme.text)
@@ -40,15 +46,17 @@ struct PairCodeView: View {
                 .textSelection(.enabled)
                 .padding(.horizontal, 24)
 
+            // Instructions
             VStack(alignment: .leading, spacing: 6) {
                 step("1", "Open WhatsApp on your phone")
                 step("2", "Settings → Linked Devices")
                 step("3", "Link a Device")
-                step("4", "Tap “Link with phone number instead”")
+                step("4", "Tap \"Link with phone number instead\"")
                 step("5", "Enter the code above")
             }
             .frame(maxWidth: 320, alignment: .leading)
 
+            // Waiting indicator
             HStack(spacing: 6) {
                 Text("waiting for confirmation")
                     .font(Theme.mono(11))
@@ -59,11 +67,57 @@ struct PairCodeView: View {
                     .opacity(blink ? 1 : 0)
             }
 
-            // Live connection log — shows the real reason if linking fails.
+            // Action buttons
+            VStack(spacing: 10) {
+                // Request a new code (same number, fresh code)
+                Button {
+                    requestingNew = true
+                    wa.requestNewCode()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { requestingNew = false }
+                } label: {
+                    Text(requestingNew ? "[ requesting… ]" : "[ new code ]")
+                        .font(Theme.mono(13, .bold))
+                        .foregroundColor(requestingNew ? Theme.textFaint : Theme.bg)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(requestingNew ? Theme.surfaceHi : Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .disabled(requestingNew)
+
+                HStack(spacing: 10) {
+                    // Fix number — restart bridge so user can enter a different number
+                    Button { wa.resetToChoosing() } label: {
+                        Text("[ fix number ]")
+                            .font(Theme.mono(13))
+                            .foregroundColor(Theme.text)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                            .background(Theme.surfaceHi)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line, lineWidth: 1))
+                    }
+
+                    // Share / copy the full connection log for debugging
+                    ShareLink(item: logText) {
+                        Text("[ share logs ]")
+                            .font(Theme.mono(13))
+                            .foregroundColor(Theme.text)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                            .background(Theme.surfaceHi)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line, lineWidth: 1))
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+
+            // Live connection log — shows real reason if linking fails
             if !wa.logs.isEmpty {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(wa.logs.suffix(8).enumerated()), id: \.offset) { _, line in
+                        ForEach(Array(wa.logs.suffix(12).enumerated()), id: \.offset) { _, line in
                             Text(line)
                                 .font(Theme.mono(9))
                                 .foregroundColor(Theme.textFaint)
@@ -72,11 +126,16 @@ struct PairCodeView: View {
                         }
                     }
                 }
-                .frame(maxHeight: 120)
+                .frame(maxHeight: 140)
                 .padding(10)
                 .background(Theme.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .padding(.horizontal, 16)
+            } else {
+                Text("// connecting — logs will appear here")
+                    .font(Theme.mono(10))
+                    .foregroundColor(Theme.textFaint)
+                    .padding(.horizontal, 16)
             }
 
             Spacer()

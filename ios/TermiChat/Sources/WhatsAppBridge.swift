@@ -19,6 +19,7 @@ final class WhatsAppBridge: NSObject, ObservableObject {
     @Published var openProfile: Profile?
     private(set) var openJID: String?
 
+    private(set) var lastPhone: String = ""   // phone used for current pairing attempt
     private var index: [String: Int] = [:]   // jid -> position in `chats`
     private var started = false
 
@@ -46,12 +47,34 @@ final class WhatsAppBridge: NSObject, ObservableObject {
 
     /// Selects the linking method after `need_pairing`. method = "qr" | "phone".
     func pair(method: String, phone: String = "") {
+        if method == "phone" { lastPhone = phone }
         #if canImport(Wabridge)
         WabridgePair(method, phone)
         #endif
         if method == "phone" {
             DispatchQueue.main.async { self.state = .connecting }
         }
+    }
+
+    /// Requests a fresh 8-char pairing code for the same phone number.
+    func requestNewCode() {
+        #if canImport(Wabridge)
+        WabridgeRequestNewCode(lastPhone)
+        #endif
+    }
+
+    /// Tears down the current bridge and restarts it so the user can enter a
+    /// different phone number. Emits `need_pairing` once the new bridge is up.
+    func resetToChoosing() {
+        #if canImport(Wabridge)
+        WabridgeStop()
+        #endif
+        started = false
+        DispatchQueue.main.async {
+            self.logs = []
+            self.state = .connecting
+        }
+        start()
     }
 
     func send(to jid: String, text: String) {

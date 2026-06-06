@@ -400,6 +400,27 @@ func Pair(method, phone string) {
 	}
 }
 
+// RequestNewCode asks WhatsApp for a fresh 8-character phone-pairing code on
+// the already-connected session. Call this when the user taps "new code".
+func RequestNewCode(phone string) {
+	gmu.Lock()
+	br := b
+	gmu.Unlock()
+	if br == nil || br.client == nil {
+		return
+	}
+	p := normalizePhone(phone)
+	br.logln("requesting new pairing code for +" + p)
+	code, err := br.client.PairPhone(br.ctx, p, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+	if err != nil {
+		br.logln("new code error: " + err.Error())
+		br.emit(map[string]interface{}{"type": "pair_error", "error": err.Error()})
+	} else {
+		br.logln("new pairing code issued")
+		br.emit(map[string]interface{}{"type": "pair_code", "code": code})
+	}
+}
+
 func normalizePhone(s string) string {
 	out := make([]rune, 0, len(s))
 	for _, r := range s {
