@@ -30,7 +30,6 @@ struct PairCodeView: View {
             Text(formatted)
                 .font(Theme.mono(34, .bold))
                 .foregroundColor(Theme.text)
-                .tracking(4)
                 .padding(.vertical, 20)
                 .padding(.horizontal, 24)
                 .frame(maxWidth: .infinity)
