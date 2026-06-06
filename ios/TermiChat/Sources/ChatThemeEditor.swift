@@ -1,26 +1,35 @@
 import SwiftUI
 import PhotosUI
 
-/// Editor for a single chat's appearance: accent color + background
-/// (none / color / image / video). Reachable from the chat header menu.
+/// Editor for appearance: accent, text & bubble colors, transparency and a
+/// background (none / color / image / video). Used both per-chat (from the chat
+/// header menu) and globally (from Settings, via `isGlobal`).
 struct ChatThemeEditor: View {
     let jid: String
     let title: String
+    var isGlobal: Bool = false
 
     @EnvironmentObject var chatTheme: ChatThemeManager
     @Environment(\.dismiss) private var dismiss
 
     @State private var style: ChatStyle
     @State private var customAccent: Bool
+    @State private var customText: Bool
+    @State private var customInBubble: Bool
+    @State private var customOutBubble: Bool
     @State private var pickerItem: PhotosPickerItem?
     @State private var applyToAll = false
     @State private var loading = false
 
-    init(jid: String, title: String, initial: ChatStyle) {
+    init(jid: String, title: String, initial: ChatStyle, isGlobal: Bool = false) {
         self.jid = jid
         self.title = title
+        self.isGlobal = isGlobal
         _style = State(initialValue: initial)
         _customAccent = State(initialValue: initial.accentHex != nil)
+        _customText = State(initialValue: initial.textHex != nil)
+        _customInBubble = State(initialValue: initial.inBubbleHex != nil)
+        _customOutBubble = State(initialValue: initial.outBubbleHex != nil)
     }
 
     var body: some View {
@@ -31,17 +40,22 @@ struct ChatThemeEditor: View {
                 Divider().overlay(Theme.line)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        Text("// customizing: \(title)")
+                        Text(isGlobal ? "// global appearance (all chats)"
+                                      : "// customizing: \(title)")
                             .font(Theme.mono(11)).foregroundColor(Theme.textFaint)
 
                         accentSection
+                        colorsSection
+                        bubbleOpacitySection
                         backgroundSection
 
-                        Toggle(isOn: $applyToAll) {
-                            Text("apply to all chats")
-                                .font(Theme.mono(12)).foregroundColor(Theme.text)
+                        if !isGlobal {
+                            Toggle(isOn: $applyToAll) {
+                                Text("apply to all chats")
+                                    .font(Theme.mono(12)).foregroundColor(Theme.text)
+                            }
+                            .tint(Theme.accent)
                         }
-                        .tint(Theme.accent)
 
                         HStack(spacing: 10) {
                             Button { save() } label: {
@@ -72,7 +86,8 @@ struct ChatThemeEditor: View {
 
     private var topBar: some View {
         HStack {
-            Text("$ chat theme").font(Theme.mono(16, .bold)).foregroundColor(Theme.accent)
+            Text(isGlobal ? "$ global theme" : "$ chat theme")
+                .font(Theme.mono(16, .bold)).foregroundColor(Theme.accent)
             Spacer()
             Button { dismiss() } label: {
                 Text("[ close ]").font(Theme.mono(12)).foregroundColor(Theme.text)
@@ -102,10 +117,67 @@ struct ChatThemeEditor: View {
         }
     }
 
+    // MARK: text + bubble colors
+
+    private var colorsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("colors").font(Theme.mono(10)).foregroundColor(Theme.textFaint)
+
+            colorToggle("custom text color", isOn: $customText,
+                        hex: $style.textHex, binding: hexBinding($style.textHex))
+            colorToggle("custom bubble (incoming)", isOn: $customInBubble,
+                        hex: $style.inBubbleHex, binding: hexBinding($style.inBubbleHex))
+            colorToggle("custom bubble (mine)", isOn: $customOutBubble,
+                        hex: $style.outBubbleHex, binding: hexBinding($style.outBubbleHex))
+        }
+    }
+
+    private func colorToggle(_ label: String, isOn: Binding<Bool>,
+                             hex: Binding<String?>, binding: Binding<Color>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: isOn) {
+                Text(label).font(Theme.mono(12)).foregroundColor(Theme.text)
+            }
+            .tint(Theme.accent)
+            .onChange(of: isOn.wrappedValue) { on in
+                if !on { hex.wrappedValue = nil }
+                else if hex.wrappedValue == nil { hex.wrappedValue = Theme.text.hexString }
+            }
+            if isOn.wrappedValue {
+                ColorPicker(selection: binding, supportsOpacity: false) {
+                    Text("color").font(Theme.mono(11)).foregroundColor(Theme.textDim)
+                }
+            }
+        }
+    }
+
+    // MARK: transparency
+
+    private var bubbleOpacitySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("bubble transparency").font(Theme.mono(10)).foregroundColor(Theme.textFaint)
+            HStack {
+                Slider(value: Binding(
+                    get: { style.bubbleOpacity ?? 1.0 },
+                    set: { style.bubbleOpacity = $0 }), in: 0.1...1.0)
+                .tint(Theme.accent)
+                Text(String(format: "%.0f%%", (style.bubbleOpacity ?? 1.0) * 100))
+                    .font(Theme.mono(10)).foregroundColor(Theme.textDim).frame(width: 44)
+            }
+        }
+    }
+
     private var accentBinding: Binding<Color> {
         Binding(
             get: { style.accentHex.flatMap { Color(hex: $0) } ?? Theme.accent },
             set: { style.accentHex = $0.hexString }
+        )
+    }
+
+    private func hexBinding(_ hex: Binding<String?>) -> Binding<Color> {
+        Binding(
+            get: { hex.wrappedValue.flatMap { Color(hex: $0) } ?? Theme.text },
+            set: { hex.wrappedValue = $0.hexString }
         )
     }
 
@@ -125,7 +197,7 @@ struct ChatThemeEditor: View {
 
             switch style.bgKind {
             case .none:
-                Text("default terminal background")
+                Text("transparent terminal background")
                     .font(Theme.mono(10)).foregroundColor(Theme.textFaint)
             case .color:
                 ColorPicker(selection: bgColorBinding, supportsOpacity: false) {
@@ -135,7 +207,7 @@ struct ChatThemeEditor: View {
                 PhotosPicker(selection: $pickerItem,
                              matching: style.bgKind == .video ? .videos : .images) {
                     Text(loading ? "[ loading… ]"
-                         : (style.bgValue.isEmpty ? "[ pick \(style.bgKind == .video ? "video" : "image") ]"
+                         : (style.bgValue.isEmpty ? "[ pick \(style.bgKind == .video ? "video" : "image/gif/png") ]"
                             : "[ change \(style.bgKind == .video ? "video" : "image") ]"))
                         .font(Theme.mono(13)).foregroundColor(Theme.text)
                         .frame(maxWidth: .infinity).padding(.vertical, 11)
@@ -145,6 +217,18 @@ struct ChatThemeEditor: View {
                 }
                 if !style.bgValue.isEmpty {
                     Text("selected ✓").font(Theme.mono(10)).foregroundColor(Theme.accent)
+                }
+                // Dim overlay so foreground text stays readable over media.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("background dim").font(Theme.mono(10)).foregroundColor(Theme.textFaint)
+                    HStack {
+                        Slider(value: Binding(
+                            get: { style.bgDim ?? 0.35 },
+                            set: { style.bgDim = $0 }), in: 0.0...0.85)
+                        .tint(Theme.accent)
+                        Text(String(format: "%.0f%%", (style.bgDim ?? 0.35) * 100))
+                            .font(Theme.mono(10)).foregroundColor(Theme.textDim).frame(width: 44)
+                    }
                 }
             }
         }
@@ -165,7 +249,7 @@ struct ChatThemeEditor: View {
             DispatchQueue.main.async {
                 loading = false
                 guard case .success(let data?) = result else { return }
-                let ext = isVideo ? ".mp4" : ".jpg"
+                let ext = isVideo ? ".mp4" : ".img"
                 if let path = chatTheme.saveBackgroundFile(data, ext: ext) {
                     style.bgValue = path
                 }
@@ -174,14 +258,18 @@ struct ChatThemeEditor: View {
     }
 
     private func save() {
-        let target = applyToAll ? ChatThemeManager.globalKey : jid
+        let target = (isGlobal || applyToAll) ? ChatThemeManager.globalKey : jid
         chatTheme.set(style, for: target)
         dismiss()
     }
 
     private func reset() {
-        chatTheme.clear(jid)
-        if applyToAll { chatTheme.clear(ChatThemeManager.globalKey) }
+        if isGlobal {
+            chatTheme.clear(ChatThemeManager.globalKey)
+        } else {
+            chatTheme.clear(jid)
+            if applyToAll { chatTheme.clear(ChatThemeManager.globalKey) }
+        }
         dismiss()
     }
 }

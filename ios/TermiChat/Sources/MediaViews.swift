@@ -2,6 +2,30 @@ import SwiftUI
 import UIKit
 import AVKit
 import AVFoundation
+import Photos
+
+/// Saves a decrypted media file to the user's photo library. Stickers/images are
+/// rasterized to PNG (so even WebP saves cleanly); videos are added as-is.
+enum MediaSaver {
+    static func save(path: String, isVideo: Bool, done: @escaping (Bool) -> Void) {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized || status == .limited else {
+                DispatchQueue.main.async { done(false) }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges {
+                if isVideo {
+                    PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: URL(fileURLWithPath: path))
+                } else if let img = AnimatedImage.load(path)?.still,
+                          let png = img.pngData() {
+                    PHAssetCreationRequest.forAsset().addResource(with: .photo, data: png, options: nil)
+                }
+            } completionHandler: { ok, _ in
+                DispatchQueue.main.async { done(ok) }
+            }
+        }
+    }
+}
 
 /// Renders the media body of a message bubble (image, sticker, gif, video,
 /// audio/voice, document). `path` is the decrypted local file once available.
@@ -33,18 +57,19 @@ struct MediaContent: View {
 
     // MARK: image / sticker / gif
 
+    @ViewBuilder
     private func imageView(maxW: CGFloat, maxH: CGFloat, rounded: Bool) -> some View {
-        Group {
-            if let p = path, let ui = UIImage(contentsOfFile: p) {
-                Image(uiImage: ui)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: maxW, maxHeight: maxH)
-                    .clipShape(RoundedRectangle(cornerRadius: rounded ? 12 : 0))
-            } else {
-                placeholder(label: msg.kind == "sticker" ? "sticker" : "image", icon: "photo")
-                    .frame(width: maxW, height: 160)
-            }
+        if let p = path, AnimatedImage.load(p) != nil {
+            // AnimatedImage handles WebP / animated WebP / GIF / PNG / JPEG so
+            // stickers (incl. animated ones) render and move correctly.
+            AnimatedImage(path: p)
+                .frame(maxWidth: maxW, maxHeight: maxH)
+                .frame(minWidth: 80, minHeight: 80)
+                .fixedSize(horizontal: false, vertical: true)
+                .clipShape(RoundedRectangle(cornerRadius: rounded ? 12 : 0))
+        } else {
+            placeholder(label: msg.kind == "sticker" ? "sticker" : "image", icon: "photo")
+                .frame(width: maxW, height: 160)
         }
     }
 

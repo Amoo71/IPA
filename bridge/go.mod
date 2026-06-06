@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/mattn/go-sqlite3 v1.14.45
 	go.mau.fi/whatsmeow v0.0.0-20260604205742-c6a4b703e48f
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -29,7 +30,6 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
 )
 
 tool golang.org/x/mobile/cmd/gobind

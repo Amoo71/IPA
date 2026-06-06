@@ -6,8 +6,10 @@ struct SettingsView: View {
 
     @EnvironmentObject var wa: WhatsAppBridge
     @EnvironmentObject var theme: ThemeManager
+    @EnvironmentObject var chatTheme: ChatThemeManager
     @Environment(\.dismiss) private var dismiss
     @State private var showLogs = false
+    @State private var showGlobalTheme = false
 
     var body: some View {
         ZStack {
@@ -32,6 +34,8 @@ struct SettingsView: View {
                         field("session", "stored locally · e2e")
 
                         themeSection
+
+                        rowButton("global chat appearance (bg · colors)") { showGlobalTheme = true }
 
                         rowButton("view connection log") { showLogs.toggle() }
                         if showLogs {
@@ -76,6 +80,12 @@ struct SettingsView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showGlobalTheme) {
+            ChatThemeEditor(jid: ChatThemeManager.globalKey, title: "all chats",
+                            initial: chatTheme.rawStyle(for: ChatThemeManager.globalKey),
+                            isGlobal: true)
+                .environmentObject(chatTheme)
+        }
     }
 
     // MARK: theme

@@ -15,6 +15,9 @@ final class WhatsAppBridge: NSObject, ObservableObject {
     @Published var logs: [String] = []
     @Published var avatars: [String: String] = [:]   // jid -> profile picture URL
     @Published var mediaPaths: [String: String] = [:] // message id -> local file path
+    @Published var starred: Set<String> = []          // starred message ids (local)
+
+    private let starredKey = "starred.message.ids"
 
     private var avatarRequested = Set<String>()       // jids we've already fetched
     private var mediaRequested = Set<String>()        // message ids we've fetched
@@ -36,6 +39,20 @@ final class WhatsAppBridge: NSObject, ObservableObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.path
     }()
+
+    override init() {
+        super.init()
+        if let saved = UserDefaults.standard.array(forKey: starredKey) as? [String] {
+            starred = Set(saved)
+        }
+    }
+
+    /// Toggle a message's local "starred / favorite" flag.
+    func toggleStar(_ id: String) {
+        guard !id.isEmpty else { return }
+        if starred.contains(id) { starred.remove(id) } else { starred.insert(id) }
+        UserDefaults.standard.set(Array(starred), forKey: starredKey)
+    }
 
     func start() {
         guard !started else { return }
@@ -112,6 +129,23 @@ final class WhatsAppBridge: NSObject, ObservableObject {
         guard !trimmed.isEmpty else { return }
         #if canImport(Wabridge)
         WabridgeSendText(jid, trimmed)
+        #endif
+    }
+
+    /// Sends `text` as a reply quoting `reply`.
+    func sendReply(to jid: String, text: String, reply: Message) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        #if canImport(Wabridge)
+        let quoted = reply.text.isEmpty ? reply.caption : reply.text
+        WabridgeSendTextReply(jid, trimmed, reply.id, reply.sender, quoted, reply.fromMe)
+        #endif
+    }
+
+    /// Force a re-sync of app state (pins/archive/mute) + re-emit cached chats.
+    func refresh() {
+        #if canImport(Wabridge)
+        WabridgeRefresh()
         #endif
     }
 

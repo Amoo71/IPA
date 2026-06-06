@@ -6,6 +6,7 @@ package wabridge
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	waCompanionReg "go.mau.fi/whatsmeow/proto/waCompanionReg"
 	waProto "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
@@ -26,6 +28,7 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	_ "github.com/mattn/go-sqlite3"
+	googleproto "google.golang.org/protobuf/proto"
 )
 
 // EventHandler is implemented on the Swift side. Every event the bridge wants to
@@ -77,17 +80,24 @@ type Message struct {
 }
 
 type bridge struct {
-	mu        sync.Mutex
-	client    *whatsmeow.Client
-	handler   EventHandler
-	ctx       context.Context
-	cancel    context.CancelFunc
-	pushNames map[string]string           // jid (user@server) -> push name
-	pairCh    chan [2]string              // {method, phone} selected by the UI
-	messages  map[string][]Message        // chat jid -> message history
-	mediaMsgs map[string]*waProto.Message // message id -> raw message (media only)
-	dataDir   string                      // writable app dir (session db + media cache)
+	mu          sync.Mutex
+	client      *whatsmeow.Client
+	handler     EventHandler
+	ctx         context.Context
+	cancel      context.CancelFunc
+	pushNames   map[string]string           // jid (user@server) -> push name
+	pairCh      chan [2]string              // {method, phone} selected by the UI
+	chats       map[string]*Chat            // chat jid -> latest snapshot (for cache)
+	messages    map[string][]Message        // chat jid -> message history
+	mediaMsgs   map[string]*waProto.Message // message id -> raw message (media only)
+	dataDir     string                      // writable app dir (session db + media cache)
+	saveMu      sync.Mutex
+	savePending bool
 }
+
+// maxStoredPerChat caps how many recent messages we persist per conversation so
+// the on-disk cache stays small while still surviving an app restart.
+const maxStoredPerChat = 100
 
 var (
 	gmu sync.Mutex
@@ -139,7 +149,7 @@ func Start(dataDir string, handler EventHandler) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	br := &bridge{handler: handler, ctx: ctx, cancel: cancel, pushNames: map[string]string{}, pairCh: make(chan [2]string, 1), messages: map[string][]Message{}, mediaMsgs: map[string]*waProto.Message{}}
+	br := &bridge{handler: handler, ctx: ctx, cancel: cancel, pushNames: map[string]string{}, pairCh: make(chan [2]string, 1), chats: map[string]*Chat{}, messages: map[string][]Message{}, mediaMsgs: map[string]*waProto.Message{}}
 	b = br
 	gmu.Unlock()
 
@@ -148,6 +158,11 @@ func Start(dataDir string, handler EventHandler) {
 
 func (br *bridge) run(dataDir string) {
 	br.dataDir = dataDir
+	// Load the persisted chat/message cache and surface it immediately so the
+	// list is populated the instant the app launches — no "syncing chats…"
+	// limbo while we wait for the socket and (maybe) a history sync.
+	br.loadCache()
+	br.emitCachedChats()
 	// Present as a normal Chrome web companion. WhatsApp rejects phone-number
 	// pairing when the platform is unknown (the whatsmeow default), so set a
 	// real browser identity that matches the PairPhone client type below.
@@ -271,10 +286,13 @@ func (br *bridge) eventHandler(rawEvt interface{}) {
 			br.emit(map[string]interface{}{"type": "contact", "jid": evt.JID.String(), "name": evt.NewBusinessName})
 		}
 	case *events.Pin:
+		br.updateChatFlag(evt.JID.String(), "pinned", evt.Action.GetPinned())
 		br.emit(map[string]interface{}{"type": "chat_flags", "jid": evt.JID.String(), "pinned": evt.Action.GetPinned()})
 	case *events.Archive:
+		br.updateChatFlag(evt.JID.String(), "archived", evt.Action.GetArchived())
 		br.emit(map[string]interface{}{"type": "chat_flags", "jid": evt.JID.String(), "archived": evt.Action.GetArchived()})
 	case *events.Mute:
+		br.updateChatFlag(evt.JID.String(), "muted", evt.Action.GetMuted())
 		br.emit(map[string]interface{}{"type": "chat_flags", "jid": evt.JID.String(), "muted": evt.Action.GetMuted()})
 	case *events.HistorySync:
 		br.handleHistorySync(evt)
@@ -352,6 +370,7 @@ func (br *bridge) handleMessage(evt *events.Message) {
 	if !evt.Info.IsFromMe {
 		chat.Unread = 1
 	}
+	br.recordChat(chat, !evt.Info.IsFromMe)
 	br.emit(map[string]interface{}{"type": "message", "chat": chat})
 
 	msg := Message{
@@ -368,12 +387,13 @@ func (br *bridge) handleMessage(evt *events.Message) {
 	}
 	br.fillMedia(&msg, evt.Message)
 	br.mu.Lock()
-	br.messages[msg.ChatJID] = append(br.messages[msg.ChatJID], msg)
+	br.messages[msg.ChatJID] = capMessages(append(br.messages[msg.ChatJID], msg))
 	if msg.HasMedia {
 		br.mediaMsgs[msg.ID] = evt.Message
 	}
 	br.mu.Unlock()
 	br.emit(map[string]interface{}{"type": "new_message", "message": msg})
+	br.scheduleSave()
 }
 
 // fillMedia populates media metadata on a Message (caption, mimetype, filename)
@@ -403,6 +423,163 @@ func (br *bridge) fillMedia(m *Message, raw *waProto.Message) {
 	case raw.GetDocumentMessage() != nil:
 		dm := raw.GetDocumentMessage()
 		m.Caption, m.Mimetype, m.Filename, m.HasMedia = dm.GetCaption(), dm.GetMimetype(), dm.GetFileName(), true
+	}
+}
+
+// recordChat merges a live chat update into the snapshot map used for the
+// on-disk cache (so the list survives restarts), preserving pin/archive/mute
+// flags and accumulating unread counts.
+func (br *bridge) recordChat(c Chat, incUnread bool) {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+	if ex, ok := br.chats[c.JID]; ok {
+		ex.LastMessage = c.LastMessage
+		ex.Timestamp = c.Timestamp
+		ex.FromMe = c.FromMe
+		if c.Name != "" {
+			ex.Name = c.Name
+		}
+		if incUnread {
+			ex.Unread++
+		} else if c.FromMe {
+			ex.Unread = 0
+		}
+		return
+	}
+	cp := c
+	br.chats[c.JID] = &cp
+}
+
+func (br *bridge) updateChatFlag(jid, flag string, value bool) {
+	br.mu.Lock()
+	if ex, ok := br.chats[jid]; ok {
+		switch flag {
+		case "pinned":
+			ex.Pinned = value
+		case "archived":
+			ex.Archived = value
+		case "muted":
+			ex.Muted = value
+		}
+	}
+	br.mu.Unlock()
+	br.scheduleSave()
+}
+
+// capMessages keeps only the most recent maxStoredPerChat messages.
+func capMessages(msgs []Message) []Message {
+	if len(msgs) > maxStoredPerChat {
+		return msgs[len(msgs)-maxStoredPerChat:]
+	}
+	return msgs
+}
+
+// emitCachedChats sends the persisted chat snapshot to the UI immediately on
+// launch so there's never a blank "syncing" screen.
+func (br *bridge) emitCachedChats() {
+	br.mu.Lock()
+	chats := make([]Chat, 0, len(br.chats))
+	for _, c := range br.chats {
+		chats = append(chats, *c)
+	}
+	br.mu.Unlock()
+	if len(chats) > 0 {
+		sort.Slice(chats, func(i, j int) bool { return chats[i].Timestamp > chats[j].Timestamp })
+		br.emit(map[string]interface{}{"type": "chats", "chats": chats})
+	}
+}
+
+// cacheFile is the JSON shape persisted to dataDir/cache.json.
+type cacheFile struct {
+	Chats    []Chat               `json:"chats"`
+	Messages map[string][]Message `json:"messages"`
+	Media    map[string]string    `json:"media"` // message id -> base64 protobuf
+}
+
+func (br *bridge) cachePath() string { return filepath.Join(br.dataDir, "cache.json") }
+
+func (br *bridge) loadCache() {
+	data, err := os.ReadFile(br.cachePath())
+	if err != nil {
+		return
+	}
+	var cf cacheFile
+	if json.Unmarshal(data, &cf) != nil {
+		return
+	}
+	br.mu.Lock()
+	defer br.mu.Unlock()
+	for i := range cf.Chats {
+		cp := cf.Chats[i]
+		br.chats[cp.JID] = &cp
+	}
+	if cf.Messages != nil {
+		br.messages = cf.Messages
+	}
+	for id, enc := range cf.Media {
+		raw, err := base64.StdEncoding.DecodeString(enc)
+		if err != nil {
+			continue
+		}
+		var m waProto.Message
+		if googleproto.Unmarshal(raw, &m) == nil {
+			br.mediaMsgs[id] = &m
+		}
+	}
+}
+
+// scheduleSave debounces cache writes so a burst of messages results in a single
+// disk write a couple seconds later.
+func (br *bridge) scheduleSave() {
+	br.saveMu.Lock()
+	if br.savePending {
+		br.saveMu.Unlock()
+		return
+	}
+	br.savePending = true
+	br.saveMu.Unlock()
+	go func() {
+		time.Sleep(2 * time.Second)
+		br.saveMu.Lock()
+		br.savePending = false
+		br.saveMu.Unlock()
+		br.saveCache()
+	}()
+}
+
+func (br *bridge) saveCache() {
+	if br.dataDir == "" {
+		return
+	}
+	br.mu.Lock()
+	cf := cacheFile{
+		Chats:    make([]Chat, 0, len(br.chats)),
+		Messages: map[string][]Message{},
+		Media:    map[string]string{},
+	}
+	for _, c := range br.chats {
+		cf.Chats = append(cf.Chats, *c)
+	}
+	for jid, msgs := range br.messages {
+		cf.Messages[jid] = capMessages(msgs)
+	}
+	for id, raw := range br.mediaMsgs {
+		if raw == nil {
+			continue
+		}
+		if data, err := googleproto.Marshal(raw); err == nil {
+			cf.Media[id] = base64.StdEncoding.EncodeToString(data)
+		}
+	}
+	br.mu.Unlock()
+
+	data, err := json.Marshal(cf)
+	if err != nil {
+		return
+	}
+	tmp := br.cachePath() + ".tmp"
+	if os.WriteFile(tmp, data, 0o600) == nil {
+		_ = os.Rename(tmp, br.cachePath())
 	}
 }
 
@@ -490,15 +667,21 @@ func (br *bridge) handleHistorySync(evt *events.HistorySync) {
 				c.LastMessage = latest.Text
 			}
 			if len(stored) > 0 {
+				sort.Slice(stored, func(i, j int) bool { return stored[i].Timestamp < stored[j].Timestamp })
 				br.mu.Lock()
-				br.messages[jid.String()] = stored
+				br.messages[jid.String()] = capMessages(stored)
 				br.mu.Unlock()
 			}
 		}
+		br.mu.Lock()
+		cp := c
+		br.chats[c.JID] = &cp
+		br.mu.Unlock()
 		chats = append(chats, c)
 	}
 	if len(chats) > 0 {
 		br.emit(map[string]interface{}{"type": "chats", "chats": chats})
+		br.scheduleSave()
 	}
 }
 
@@ -644,6 +827,18 @@ func (br *bridge) fetchProfile(jidStr string) {
 
 // SendText sends a plain text message to the given JID (e.g. "123@s.whatsapp.net").
 func SendText(jidStr, text string) {
+	sendTextInternal(jidStr, text, "", "", "", false)
+}
+
+// SendTextReply sends a text message that quotes an earlier message, producing a
+// real WhatsApp reply. replyID is the quoted message id, replySender the quoted
+// author's JID ("" for a 1:1 chat), replyText the quoted body, and replyFromMe
+// whether the quoted message was sent by us.
+func SendTextReply(jidStr, text, replyID, replySender, replyText string, replyFromMe bool) {
+	sendTextInternal(jidStr, text, replyID, replySender, replyText, replyFromMe)
+}
+
+func sendTextInternal(jidStr, text, replyID, replySender, replyText string, replyFromMe bool) {
 	gmu.Lock()
 	br := b
 	gmu.Unlock()
@@ -654,7 +849,29 @@ func SendText(jidStr, text string) {
 	if err != nil {
 		return
 	}
-	msg := &waProto.Message{Conversation: proto(text)}
+
+	var msg *waProto.Message
+	if replyID != "" {
+		participant := replySender
+		if replyFromMe {
+			if br.client.Store != nil && br.client.Store.ID != nil {
+				participant = br.client.Store.ID.ToNonAD().String()
+			}
+		} else if participant == "" {
+			participant = jidStr // 1:1: the quoted author is the chat itself
+		}
+		msg = &waProto.Message{ExtendedTextMessage: &waProto.ExtendedTextMessage{
+			Text: proto(text),
+			ContextInfo: &waProto.ContextInfo{
+				StanzaID:      proto(replyID),
+				Participant:   proto(participant),
+				QuotedMessage: &waProto.Message{Conversation: proto(replyText)},
+			},
+		}}
+	} else {
+		msg = &waProto.Message{Conversation: proto(text)}
+	}
+
 	ctx, cancel := context.WithTimeout(br.ctx, 30*time.Second)
 	defer cancel()
 	resp, sendErr := br.client.SendMessage(ctx, jid, msg)
@@ -669,13 +886,16 @@ func SendText(jidStr, text string) {
 	}
 	m := Message{ID: id, ChatJID: jidStr, Text: text, Timestamp: ts, FromMe: true, Kind: "text"}
 	br.mu.Lock()
-	br.messages[jidStr] = append(br.messages[jidStr], m)
+	br.messages[jidStr] = capMessages(append(br.messages[jidStr], m))
 	br.mu.Unlock()
 	br.emit(map[string]interface{}{"type": "new_message", "message": m})
-	br.emit(map[string]interface{}{"type": "message", "chat": Chat{
+	chat := Chat{
 		JID: jidStr, Name: br.displayName(jid, ""), LastMessage: text,
 		Timestamp: ts, FromMe: true, IsGroup: jid.Server == types.GroupServer,
-	}})
+	}
+	br.recordChat(chat, false)
+	br.emit(map[string]interface{}{"type": "message", "chat": chat})
+	br.scheduleSave()
 }
 
 // DownloadMedia decrypts the media attached to a stored message, writes it to
@@ -690,7 +910,19 @@ func DownloadMedia(id string) {
 	br.mu.Lock()
 	raw := br.mediaMsgs[id]
 	br.mu.Unlock()
+
+	// After a restart the raw proto may be gone but the decrypted file can still
+	// be on disk from a previous session — serve it directly.
 	if raw == nil {
+		dir := filepath.Join(br.dataDir, "media")
+		if entries, err := os.ReadDir(dir); err == nil {
+			for _, e := range entries {
+				if strings.HasPrefix(e.Name(), id+".") {
+					br.emit(map[string]interface{}{"type": "media", "id": id, "path": filepath.Join(dir, e.Name())})
+					return
+				}
+			}
+		}
 		return
 	}
 	go func() {
@@ -770,13 +1002,16 @@ func SendMedia(jidStr, path, kind, caption string) {
 			br.mu.Unlock()
 		}
 		br.mu.Lock()
-		br.messages[jidStr] = append(br.messages[jidStr], m)
+		br.messages[jidStr] = capMessages(append(br.messages[jidStr], m))
 		br.mu.Unlock()
 		br.emit(map[string]interface{}{"type": "new_message", "message": m})
-		br.emit(map[string]interface{}{"type": "message", "chat": Chat{
+		chat := Chat{
 			JID: jidStr, Name: br.displayName(jid, ""), LastMessage: describeMessage(msg),
 			Timestamp: ts, FromMe: true, IsGroup: jid.Server == types.GroupServer,
-		}})
+		}
+		br.recordChat(chat, false)
+		br.emit(map[string]interface{}{"type": "message", "chat": chat})
+		br.scheduleSave()
 	}()
 }
 
@@ -893,6 +1128,33 @@ func buildMediaMessage(kind, mime, caption, filename string, up whatsmeow.Upload
 	}}
 }
 
+// Refresh forces a re-sync of WhatsApp app state (pins, archive, mute, starred)
+// and re-emits the cached chat list. Wired to pull-to-refresh in the UI.
+func Refresh() {
+	gmu.Lock()
+	br := b
+	gmu.Unlock()
+	if br == nil || br.client == nil {
+		return
+	}
+	br.emitCachedChats()
+	if !br.client.IsConnected() {
+		return
+	}
+	go func() {
+		for _, name := range []appstate.WAPatchName{
+			appstate.WAPatchRegular,
+			appstate.WAPatchRegularHigh,
+			appstate.WAPatchRegularLow,
+			appstate.WAPatchCriticalUnblockLow,
+		} {
+			if err := br.client.FetchAppState(br.ctx, name, false, false); err != nil {
+				br.logln("refresh " + string(name) + ": " + err.Error())
+			}
+		}
+	}()
+}
+
 // Logout unlinks the device and clears the local session.
 func Logout() {
 	gmu.Lock()
@@ -902,6 +1164,12 @@ func Logout() {
 		return
 	}
 	_ = br.client.Logout(br.ctx)
+	br.mu.Lock()
+	br.chats = map[string]*Chat{}
+	br.messages = map[string][]Message{}
+	br.mediaMsgs = map[string]*waProto.Message{}
+	br.mu.Unlock()
+	_ = os.Remove(br.cachePath())
 }
 
 // Stop disconnects and tears down the bridge.
@@ -910,8 +1178,11 @@ func Stop() {
 	br := b
 	b = nil
 	gmu.Unlock()
-	if br != nil && br.cancel != nil {
-		br.cancel()
+	if br != nil {
+		br.saveCache()
+		if br.cancel != nil {
+			br.cancel()
+		}
 	}
 }
 

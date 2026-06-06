@@ -47,5 +47,9 @@
 	</array>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>TermiChat saves stickers, photos and videos you choose to your photo library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TermiChat lets you attach photos and videos from your library to messages.</string>
 </dict>
 </plist>

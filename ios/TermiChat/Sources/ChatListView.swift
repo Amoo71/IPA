@@ -47,6 +47,7 @@ struct ChatListView: View {
             SettingsView(name: displayName, jid: jid)
                 .environmentObject(wa)
                 .environmentObject(theme)
+                .environmentObject(chatTheme)
         }
         .fullScreenCover(item: $selected) { chat in
             ChatDetailView(chat: chat)
@@ -164,8 +165,8 @@ struct ChatListView: View {
     // MARK: list
 
     private var chatScroll: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
+        List {
+            Group {
                 if visible.isEmpty {
                     emptyState
                 } else {
@@ -179,7 +180,17 @@ struct ChatListView: View {
                     }
                 }
             }
-            .padding(.top, 4)
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 0)
+        .refreshable {
+            wa.refresh()
+            // Keep the spinner up briefly so the pull feels responsive.
+            try? await Task.sleep(nanoseconds: 900_000_000)
         }
     }
 

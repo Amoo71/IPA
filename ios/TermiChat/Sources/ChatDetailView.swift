@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import PhotosUI
 import UniformTypeIdentifiers
 
@@ -14,6 +15,7 @@ struct ChatDetailView: View {
     @State private var showProfile = false
     @State private var showThemeEditor = false
     @State private var notice: String?
+    @State private var replyTo: Message?
 
     // Attachment pickers.
     @State private var photoItem: PhotosPickerItem?
@@ -23,6 +25,7 @@ struct ChatDetailView: View {
     @State private var showDocImporter = false
 
     private var accent: Color { chatTheme.accent(for: chat.jid) }
+    private var resolved: ResolvedChatStyle { chatTheme.resolved(for: chat.jid) }
     private var title: String { wa.openProfile?.name ?? chat.display }
 
     private var subtitle: String {
@@ -38,6 +41,7 @@ struct ChatDetailView: View {
 
     var body: some View {
         ZStack {
+            Theme.bg.ignoresSafeArea()
             ChatBackgroundView(jid: chat.jid).ignoresSafeArea()
             VStack(spacing: 0) {
                 header
@@ -121,7 +125,8 @@ struct ChatDetailView: View {
                             .padding(.top, 40)
                     }
                     ForEach(wa.openMessages, id: \.rowKey) { msg in
-                        Bubble(msg: msg, isGroup: chat.isGroup, accent: accent)
+                        Bubble(msg: msg, isGroup: chat.isGroup, style: resolved,
+                               onReply: { replyTo = $0 })
                             .id(msg.rowKey)
                     }
                 }
@@ -143,6 +148,8 @@ struct ChatDetailView: View {
     private var inputBar: some View {
         VStack(spacing: 0) {
             Divider().overlay(Theme.line)
+
+            if let r = replyTo { replyPreview(r) }
 
             if let notice {
                 Text(notice)
@@ -199,9 +206,47 @@ struct ChatDetailView: View {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Quoted-message banner shown above the input while composing a reply.
+    private func replyPreview(_ r: Message) -> some View {
+        HStack(spacing: 8) {
+            Rectangle().fill(accent).frame(width: 3)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(r.fromMe ? "you" : (r.senderName.isEmpty ? "reply" : r.senderName))
+                    .font(Theme.mono(10, .bold)).foregroundColor(accent)
+                Text(replySnippet(r))
+                    .font(Theme.mono(11)).foregroundColor(Theme.textDim).lineLimit(1)
+            }
+            Spacer()
+            Button { replyTo = nil } label: {
+                Image(systemName: "xmark.circle.fill").foregroundColor(Theme.textFaint)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private func replySnippet(_ r: Message) -> String {
+        if !r.text.isEmpty { return r.text }
+        if !r.caption.isEmpty { return r.caption }
+        switch r.kind {
+        case "image": return "📷 photo"
+        case "sticker": return "🌟 sticker"
+        case "video": return "🎥 video"
+        case "gif": return "🎞 gif"
+        case "audio", "voice": return "🎤 audio"
+        case "document": return "📎 document"
+        default: return r.kind
+        }
+    }
+
     private func sendDraft() {
         guard canSend else { return }
-        wa.send(to: chat.jid, text: draft)
+        if let r = replyTo {
+            wa.sendReply(to: chat.jid, text: draft, reply: r)
+            replyTo = nil
+        } else {
+            wa.send(to: chat.jid, text: draft)
+        }
         draft = ""
     }
 
@@ -251,10 +296,19 @@ struct ChatDetailView: View {
 private struct Bubble: View {
     let msg: Message
     let isGroup: Bool
-    let accent: Color
+    let style: ResolvedChatStyle
+    let onReply: (Message) -> Void
     @EnvironmentObject var wa: WhatsAppBridge
 
+    @State private var shareURL: ShareItem?
+
+    private var accent: Color { style.accent }
     private var path: String? { wa.mediaPaths[msg.id].flatMap { $0.isEmpty ? nil : $0 } }
+    private var isStarred: Bool { wa.starred.contains(msg.id) }
+    private var bubbleFill: Color {
+        msg.fromMe ? style.outBubble.opacity(style.outOpacity)
+                   : style.inBubble.opacity(style.inOpacity)
+    }
 
     var body: some View {
         HStack {
@@ -271,34 +325,87 @@ private struct Bubble: View {
                     if !msg.caption.isEmpty {
                         Text(msg.caption)
                             .font(Theme.mono(13))
-                            .foregroundColor(Theme.text)
+                            .foregroundColor(style.text)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 } else {
                     Text(msg.text.isEmpty ? "—" : msg.text)
                         .font(Theme.mono(13))
-                        .foregroundColor(Theme.text)
+                        .foregroundColor(style.text)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text(msg.timeLabel)
-                    .font(Theme.mono(9))
-                    .foregroundColor(Theme.textFaint)
+                HStack(spacing: 4) {
+                    if isStarred {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 8)).foregroundColor(Theme.warn)
+                    }
+                    Text(msg.timeLabel)
+                        .font(Theme.mono(9))
+                        .foregroundColor(Theme.textFaint)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(msg.fromMe ? accent.opacity(0.16) : Theme.surfaceHi)
+            .background(bubbleFill)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(msg.fromMe ? accent.opacity(0.35) : Theme.line, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            .contextMenu { contextMenu }
             if !msg.fromMe { Spacer(minLength: 40) }
         }
         .onAppear {
             if msg.hasMedia && path == nil { wa.downloadMedia(msg.id) }
         }
+        .sheet(item: $shareURL) { item in
+            ShareSheet(url: item.url)
+        }
     }
+
+    @ViewBuilder
+    private var contextMenu: some View {
+        Button { onReply(msg) } label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
+
+        Button { wa.toggleStar(msg.id) } label: {
+            Label(isStarred ? "Unstar" : "Star",
+                  systemImage: isStarred ? "star.slash" : "star")
+        }
+
+        if !msg.text.isEmpty {
+            Button { UIPasteboard.general.string = msg.text } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+        }
+
+        if msg.isMedia, let p = path {
+            let isVideo = msg.kind == "video"
+            if msg.kind != "document" && msg.kind != "audio" && msg.kind != "voice" {
+                Button {
+                    MediaSaver.save(path: p, isVideo: isVideo) { _ in }
+                } label: {
+                    Label(msg.kind == "sticker" ? "Save sticker" : "Save to Photos",
+                          systemImage: "square.and.arrow.down")
+                }
+            }
+            Button { shareURL = ShareItem(url: URL(fileURLWithPath: p)) } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        }
+    }
+}
+
+/// Identifiable wrapper so a file URL can drive a `.sheet(item:)`.
+private struct ShareItem: Identifiable { let id = UUID(); let url: URL }
+
+/// UIKit share sheet for exporting a media file (preserves original format).
+private struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Avatar
