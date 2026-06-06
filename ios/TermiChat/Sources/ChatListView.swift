@@ -6,6 +6,7 @@ struct ChatListView: View {
 
     @EnvironmentObject var wa: WhatsAppBridge
     @EnvironmentObject var theme: ThemeManager
+    @EnvironmentObject var chatTheme: ChatThemeManager
     @State private var query: String = ""
     @State private var showArchived = false
     @State private var showSettings = false
@@ -51,6 +52,7 @@ struct ChatListView: View {
             ChatDetailView(chat: chat)
                 .environmentObject(wa)
                 .environmentObject(theme)
+                .environmentObject(chatTheme)
         }
     }
 

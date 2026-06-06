@@ -1,15 +1,28 @@
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 
 /// A single conversation: profile header, message history, and a CLI-style
 /// input line. Reads live state from `WhatsAppBridge.openMessages/openProfile`.
 struct ChatDetailView: View {
     let chat: Chat
     @EnvironmentObject var wa: WhatsAppBridge
+    @EnvironmentObject var chatTheme: ChatThemeManager
     @Environment(\.dismiss) private var dismiss
+
     @State private var draft = ""
     @State private var showProfile = false
+    @State private var showThemeEditor = false
     @State private var notice: String?
 
+    // Attachment pickers.
+    @State private var photoItem: PhotosPickerItem?
+    @State private var videoItem: PhotosPickerItem?
+    @State private var showImagePicker = false
+    @State private var showVideoPicker = false
+    @State private var showDocImporter = false
+
+    private var accent: Color { chatTheme.accent(for: chat.jid) }
     private var title: String { wa.openProfile?.name ?? chat.display }
 
     private var subtitle: String {
@@ -24,18 +37,32 @@ struct ChatDetailView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().overlay(Theme.line)
-            messageList
-            inputBar
+        ZStack {
+            ChatBackgroundView(jid: chat.jid).ignoresSafeArea()
+            VStack(spacing: 0) {
+                header
+                Divider().overlay(Theme.line)
+                messageList
+                inputBar
+            }
         }
-        .background(Theme.bg.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .onAppear { wa.openChat(chat.jid) }
         .onDisappear { wa.closeChat() }
         .sheet(isPresented: $showProfile) {
             ProfileView(chat: chat).environmentObject(wa)
+        }
+        .sheet(isPresented: $showThemeEditor) {
+            ChatThemeEditor(jid: chat.jid, title: title, initial: chatTheme.rawStyle(for: chat.jid))
+                .environmentObject(chatTheme)
+        }
+        .photosPicker(isPresented: $showImagePicker, selection: $photoItem, matching: .images)
+        .photosPicker(isPresented: $showVideoPicker, selection: $videoItem, matching: .videos)
+        .onChange(of: photoItem) { item in send(item, kind: "image") }
+        .onChange(of: videoItem) { item in send(item, kind: "video") }
+        .fileImporter(isPresented: $showDocImporter,
+                      allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
+            handleDocument(result)
         }
     }
 
@@ -46,7 +73,7 @@ struct ChatDetailView: View {
             Button { dismiss() } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(Theme.accent)
+                    .foregroundColor(accent)
             }
             // Tap the avatar/name to open the full profile.
             Button { showProfile = true } label: {
@@ -67,14 +94,18 @@ struct ChatDetailView: View {
             }
             .buttonStyle(.plain)
             Spacer()
-            Button { showProfile = true } label: {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 17))
-                    .foregroundColor(Theme.accent)
+            Menu {
+                Button { showProfile = true } label: { Label("Profile", systemImage: "person.crop.circle") }
+                Button { showThemeEditor = true } label: { Label("Customize theme", systemImage: "paintbrush") }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 18))
+                    .foregroundColor(accent)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+        .background(Theme.surface.opacity(0.92))
     }
 
     // MARK: messages
@@ -90,7 +121,8 @@ struct ChatDetailView: View {
                             .padding(.top, 40)
                     }
                     ForEach(wa.openMessages, id: \.rowKey) { msg in
-                        Bubble(msg: msg, isGroup: chat.isGroup).id(msg.rowKey)
+                        Bubble(msg: msg, isGroup: chat.isGroup, accent: accent)
+                            .id(msg.rowKey)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -122,60 +154,45 @@ struct ChatDetailView: View {
             }
 
             HStack(spacing: 8) {
-                // Attachments: photo / gif / sticker / document.
+                // Attachments: photo / video / document.
                 Menu {
-                    Button { note("photo sending is coming soon") } label: {
-                        Label("Photo", systemImage: "photo")
-                    }
-                    Button { note("gif sending is coming soon") } label: {
-                        Label("GIF", systemImage: "rectangle.stack.badge.play")
-                    }
-                    Button { note("sticker sending is coming soon") } label: {
-                        Label("Sticker", systemImage: "face.smiling")
-                    }
-                    Button { note("document sending is coming soon") } label: {
-                        Label("Document", systemImage: "doc")
-                    }
+                    Button { showImagePicker = true } label: { Label("Photo", systemImage: "photo") }
+                    Button { showVideoPicker = true } label: { Label("Video", systemImage: "video") }
+                    Button { showDocImporter = true } label: { Label("Document", systemImage: "doc") }
                 } label: {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 24))
-                        .foregroundColor(Theme.accent)
+                        .foregroundColor(accent)
                 }
 
-                // Rounded text field with an inline sticker/emoji button.
                 HStack(spacing: 8) {
                     Text(">")
                         .font(Theme.mono(14, .bold))
-                        .foregroundColor(Theme.accent)
+                        .foregroundColor(accent)
                     TextField("", text: $draft,
                               prompt: Text("message").foregroundColor(Theme.textFaint))
                         .font(Theme.mono(14))
                         .foregroundColor(Theme.text)
                         .submitLabel(.send)
                         .onSubmit(sendDraft)
-                    Button { note("stickers & gifs are coming soon") } label: {
-                        Image(systemName: "face.smiling")
-                            .font(.system(size: 18))
-                            .foregroundColor(Theme.textDim)
-                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .background(Theme.bg)
+                .background(Theme.bg.opacity(0.9))
                 .clipShape(RoundedRectangle(cornerRadius: 20))
                 .overlay(RoundedRectangle(cornerRadius: 20).stroke(Theme.line, lineWidth: 1))
 
                 Button(action: sendDraft) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 30))
-                        .foregroundColor(canSend ? Theme.accent : Theme.textFaint)
+                        .foregroundColor(canSend ? accent : Theme.textFaint)
                 }
                 .disabled(!canSend)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
         }
-        .background(Theme.surface)
+        .background(Theme.surface.opacity(0.92))
     }
 
     private var canSend: Bool {
@@ -186,6 +203,38 @@ struct ChatDetailView: View {
         guard canSend else { return }
         wa.send(to: chat.jid, text: draft)
         draft = ""
+    }
+
+    // MARK: media sending
+
+    private func send(_ item: PhotosPickerItem?, kind: String) {
+        guard let item else { return }
+        note("sending \(kind)…")
+        item.loadTransferable(type: Data.self) { result in
+            guard case .success(let data?) = result else { return }
+            let ext = kind == "video" ? ".mp4" : ".jpg"
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ext)
+            do {
+                try data.write(to: url)
+                DispatchQueue.main.async {
+                    wa.sendMedia(to: chat.jid, path: url.path, kind: kind)
+                }
+            } catch {}
+        }
+    }
+
+    private func handleDocument(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let u = urls.first else { return }
+        let access = u.startAccessingSecurityScopedResource()
+        defer { if access { u.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: u) else { return }
+        let dst = FileManager.default.temporaryDirectory.appendingPathComponent(u.lastPathComponent)
+        do {
+            try data.write(to: dst)
+            wa.sendMedia(to: chat.jid, path: dst.path, kind: "document")
+            note("sending document…")
+        } catch {}
     }
 
     /// Show a transient one-line notice above the input bar.
@@ -202,33 +251,52 @@ struct ChatDetailView: View {
 private struct Bubble: View {
     let msg: Message
     let isGroup: Bool
+    let accent: Color
+    @EnvironmentObject var wa: WhatsAppBridge
+
+    private var path: String? { wa.mediaPaths[msg.id].flatMap { $0.isEmpty ? nil : $0 } }
 
     var body: some View {
         HStack {
             if msg.fromMe { Spacer(minLength: 40) }
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 if isGroup && !msg.fromMe && !msg.senderName.isEmpty {
                     Text(msg.senderName)
                         .font(Theme.mono(10, .bold))
-                        .foregroundColor(Theme.accent)
+                        .foregroundColor(accent)
                 }
-                Text(msg.text.isEmpty ? "—" : msg.text)
-                    .font(Theme.mono(13))
-                    .foregroundColor(Theme.text)
-                    .fixedSize(horizontal: false, vertical: true)
+
+                if msg.isMedia {
+                    MediaContent(msg: msg, path: path, accent: accent)
+                    if !msg.caption.isEmpty {
+                        Text(msg.caption)
+                            .font(Theme.mono(13))
+                            .foregroundColor(Theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    Text(msg.text.isEmpty ? "—" : msg.text)
+                        .font(Theme.mono(13))
+                        .foregroundColor(Theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 Text(msg.timeLabel)
                     .font(Theme.mono(9))
                     .foregroundColor(Theme.textFaint)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(msg.fromMe ? Theme.accent.opacity(0.16) : Theme.surfaceHi)
+            .background(msg.fromMe ? accent.opacity(0.16) : Theme.surfaceHi)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(msg.fromMe ? Theme.accent.opacity(0.35) : Theme.line, lineWidth: 1)
+                    .stroke(msg.fromMe ? accent.opacity(0.35) : Theme.line, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: 10))
             if !msg.fromMe { Spacer(minLength: 40) }
+        }
+        .onAppear {
+            if msg.hasMedia && path == nil { wa.downloadMedia(msg.id) }
         }
     }
 }

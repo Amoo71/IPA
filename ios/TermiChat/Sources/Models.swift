@@ -50,6 +50,13 @@ struct Message: Codable, Equatable {
     var sender: String
     var senderName: String
     var kind: String
+    var caption: String = ""
+    var mimetype: String = ""
+    var filename: String = ""
+    var hasMedia: Bool = false
+    var mediaPath: String = ""
+
+    var isMedia: Bool { hasMedia || kind != "text" }
 
     var date: Date { Date(timeIntervalSince1970: TimeInterval(timestamp)) }
 

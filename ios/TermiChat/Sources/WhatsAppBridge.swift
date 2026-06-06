@@ -14,8 +14,10 @@ final class WhatsAppBridge: NSObject, ObservableObject {
     @Published private(set) var chats: [Chat] = []
     @Published var logs: [String] = []
     @Published var avatars: [String: String] = [:]   // jid -> profile picture URL
+    @Published var mediaPaths: [String: String] = [:] // message id -> local file path
 
     private var avatarRequested = Set<String>()       // jids we've already fetched
+    private var mediaRequested = Set<String>()        // message ids we've fetched
 
     // Currently open conversation.
     @Published var openMessages: [Message] = []
@@ -65,6 +67,22 @@ final class WhatsAppBridge: NSObject, ObservableObject {
         avatarRequested.insert(jid)
         #if canImport(Wabridge)
         WabridgeFetchPicture(jid)
+        #endif
+    }
+
+    /// Download (decrypt) the media for a message, once per id.
+    func downloadMedia(_ id: String) {
+        guard !id.isEmpty, mediaPaths[id] == nil, !mediaRequested.contains(id) else { return }
+        mediaRequested.insert(id)
+        #if canImport(Wabridge)
+        WabridgeDownloadMedia(id)
+        #endif
+    }
+
+    /// Send a media file (image/video/gif/audio/voice/document) to a chat.
+    func sendMedia(to jid: String, path: String, kind: String, caption: String = "") {
+        #if canImport(Wabridge)
+        WabridgeSendMedia(jid, path, kind, caption)
         #endif
     }
 
@@ -185,17 +203,27 @@ final class WhatsAppBridge: NSObject, ObservableObject {
             if let jid = obj["jid"] as? String, let arr = obj["messages"] as? [[String: Any]] {
                 let parsed = arr.compactMap { Self.decode(Message.self, $0) }
                 DispatchQueue.main.async {
+                    for m in parsed where !m.mediaPath.isEmpty { self.mediaPaths[m.id] = m.mediaPath }
                     if jid == self.openJID { self.openMessages = parsed }
                 }
             }
         case "new_message":
             if let d = obj["message"] as? [String: Any], let m = Self.decode(Message.self, d) {
                 DispatchQueue.main.async {
+                    if !m.mediaPath.isEmpty { self.mediaPaths[m.id] = m.mediaPath }
                     if m.chatJid == self.openJID,
                        !self.openMessages.contains(where: { $0.rowKey == m.rowKey }) {
                         self.openMessages.append(m)
                     }
                 }
+            }
+        case "media":
+            if let id = obj["id"] as? String, let path = obj["path"] as? String {
+                DispatchQueue.main.async { self.mediaPaths[id] = path }
+            }
+        case "chat_flags":
+            if let jid = obj["jid"] as? String {
+                DispatchQueue.main.async { self.applyFlags(jid: jid, obj: obj) }
             }
         case "profile":
             if let p = Self.decode(Profile.self, obj) {
@@ -230,6 +258,15 @@ final class WhatsAppBridge: NSObject, ObservableObject {
     }
 
     // MARK: - List mutation
+
+    /// Apply a live pin/archive/mute change from another device.
+    private func applyFlags(jid: String, obj: [String: Any]) {
+        guard let i = index[jid] else { return }
+        if let pinned = obj["pinned"] as? Bool { chats[i].pinned = pinned }
+        if let archived = obj["archived"] as? Bool { chats[i].archived = archived }
+        if let muted = obj["muted"] as? Bool { chats[i].muted = muted }
+        sortAndIndex()
+    }
 
     private func rebuildIndex() {
         index.removeAll(keepingCapacity: true)
