@@ -166,8 +166,8 @@ final class WhatsAppBridge: NSObject, ObservableObject {
 // MARK: - Gomobile callback conformance
 
 #if canImport(Wabridge)
-extension WhatsAppBridge: WabridgeEventHandler {
-    func handleEvent(_ json: String?) {
+extension WhatsAppBridge: WabridgeEventHandlerProtocol {
+    @objc func handleEvent(_ json: String?) {
         guard let json else { return }
         handle(json)
     }
