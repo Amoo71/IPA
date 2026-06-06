@@ -2,7 +2,9 @@ name: Build IPA
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "claude/**"
     paths:
       - "bridge/**"
       - "ios/**"
