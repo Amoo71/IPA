@@ -14,6 +14,11 @@ final class WhatsAppBridge: NSObject, ObservableObject {
     @Published private(set) var chats: [Chat] = []
     @Published var logs: [String] = []
 
+    // Currently open conversation.
+    @Published var openMessages: [Message] = []
+    @Published var openProfile: Profile?
+    private(set) var openJID: String?
+
     private var index: [String: Int] = [:]   // jid -> position in `chats`
     private var started = false
 
@@ -50,9 +55,29 @@ final class WhatsAppBridge: NSObject, ObservableObject {
     }
 
     func send(to jid: String, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         #if canImport(Wabridge)
-        WabridgeSendText(jid, text)
+        WabridgeSendText(jid, trimmed)
         #endif
+    }
+
+    /// Open a conversation: load history + fetch the contact/group profile.
+    func openChat(_ jid: String) {
+        openJID = jid
+        openMessages = []
+        openProfile = nil
+        // Reading a chat clears its unread badge in the list.
+        if let i = index[jid] { chats[i].unread = 0 }
+        #if canImport(Wabridge)
+        WabridgeOpenChat(jid)
+        #endif
+    }
+
+    func closeChat() {
+        openJID = nil
+        openMessages = []
+        openProfile = nil
     }
 
     func logout() {
@@ -121,6 +146,28 @@ final class WhatsAppBridge: NSObject, ObservableObject {
             if let c = obj["chat"] as? [String: Any], let chat = Self.decodeChat(c) {
                 DispatchQueue.main.async { self.upsertLive(chat) }
             }
+        case "messages":
+            if let jid = obj["jid"] as? String, let arr = obj["messages"] as? [[String: Any]] {
+                let parsed = arr.compactMap { Self.decode(Message.self, $0) }
+                DispatchQueue.main.async {
+                    if jid == self.openJID { self.openMessages = parsed }
+                }
+            }
+        case "new_message":
+            if let d = obj["message"] as? [String: Any], let m = Self.decode(Message.self, d) {
+                DispatchQueue.main.async {
+                    if m.chatJid == self.openJID,
+                       !self.openMessages.contains(where: { $0.rowKey == m.rowKey }) {
+                        self.openMessages.append(m)
+                    }
+                }
+            }
+        case "profile":
+            if let p = Self.decode(Profile.self, obj) {
+                DispatchQueue.main.async {
+                    if p.jid == self.openJID { self.openProfile = p }
+                }
+            }
         case "log":
             if let line = obj["line"] as? String {
                 DispatchQueue.main.async {
@@ -134,8 +181,12 @@ final class WhatsAppBridge: NSObject, ObservableObject {
     }
 
     private static func decodeChat(_ dict: [String: Any]) -> Chat? {
+        decode(Chat.self, dict)
+    }
+
+    private static func decode<T: Decodable>(_ type: T.Type, _ dict: [String: Any]) -> T? {
         guard let data = try? JSONSerialization.data(withJSONObject: dict) else { return nil }
-        return try? JSONDecoder().decode(Chat.self, from: data)
+        return try? JSONDecoder().decode(T.self, from: data)
     }
 
     // MARK: - List mutation

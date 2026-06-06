@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -52,6 +53,18 @@ type Chat struct {
 	FromMe      bool   `json:"fromMe"`
 }
 
+// Message is a single chat message surfaced to the UI.
+type Message struct {
+	ID         string `json:"id"`
+	ChatJID    string `json:"chatJid"`
+	Text       string `json:"text"`
+	Timestamp  int64  `json:"timestamp"`
+	FromMe     bool   `json:"fromMe"`
+	Sender     string `json:"sender"`     // participant JID (groups)
+	SenderName string `json:"senderName"` // display name (groups)
+	Kind       string `json:"kind"`       // text, image, video, audio, ...
+}
+
 type bridge struct {
 	mu        sync.Mutex
 	client    *whatsmeow.Client
@@ -60,6 +73,7 @@ type bridge struct {
 	cancel    context.CancelFunc
 	pushNames map[string]string // jid (user@server) -> push name
 	pairCh    chan [2]string    // {method, phone} selected by the UI
+	messages  map[string][]Message // chat jid -> message history
 }
 
 var (
@@ -94,7 +108,7 @@ func Start(dataDir string, handler EventHandler) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	br := &bridge{handler: handler, ctx: ctx, cancel: cancel, pushNames: map[string]string{}, pairCh: make(chan [2]string, 1)}
+	br := &bridge{handler: handler, ctx: ctx, cancel: cancel, pushNames: map[string]string{}, pairCh: make(chan [2]string, 1), messages: map[string][]Message{}}
 	b = br
 	gmu.Unlock()
 
@@ -248,6 +262,23 @@ func (br *bridge) handleMessage(evt *events.Message) {
 		chat.Unread = 1
 	}
 	br.emit(map[string]interface{}{"type": "message", "chat": chat})
+
+	msg := Message{
+		ID:        evt.Info.ID,
+		ChatJID:   evt.Info.Chat.String(),
+		Text:      text,
+		Timestamp: evt.Info.Timestamp.Unix(),
+		FromMe:    evt.Info.IsFromMe,
+		Kind:      messageKind(evt.Message),
+	}
+	if evt.Info.IsGroup {
+		msg.Sender = evt.Info.Sender.String()
+		msg.SenderName = evt.Info.PushName
+	}
+	br.mu.Lock()
+	br.messages[msg.ChatJID] = append(br.messages[msg.ChatJID], msg)
+	br.mu.Unlock()
+	br.emit(map[string]interface{}{"type": "new_message", "message": msg})
 }
 
 func (br *bridge) handleHistorySync(evt *events.HistorySync) {
@@ -288,6 +319,37 @@ func (br *bridge) handleHistorySync(evt *events.HistorySync) {
 					c.LastMessage = describeMessage(wm.GetMessage())
 				}
 			}
+			// Store the full (recent) history for this chat.
+			var stored []Message
+			for _, hsMsg := range msgs {
+				wm := hsMsg.GetMessage()
+				if wm == nil {
+					continue
+				}
+				inner := wm.GetMessage()
+				text := extractText(inner)
+				if text == "" {
+					text = describeMessage(inner)
+				}
+				m := Message{
+					ID:        wm.GetKey().GetID(),
+					ChatJID:   jid.String(),
+					Text:      text,
+					Timestamp: int64(wm.GetMessageTimestamp()),
+					FromMe:    wm.GetKey().GetFromMe(),
+					Kind:      messageKind(inner),
+				}
+				if c.IsGroup {
+					m.Sender = wm.GetKey().GetParticipant()
+					m.SenderName = wm.GetPushName()
+				}
+				stored = append(stored, m)
+			}
+			if len(stored) > 0 {
+				br.mu.Lock()
+				br.messages[jid.String()] = stored
+				br.mu.Unlock()
+			}
 		}
 		chats = append(chats, c)
 	}
@@ -322,6 +384,58 @@ func normalizePhone(s string) string {
 	return string(out)
 }
 
+// OpenChat emits the stored message history for a chat and asynchronously
+// fetches the contact/group profile (name, about/topic, picture URL).
+func OpenChat(jidStr string) {
+	gmu.Lock()
+	br := b
+	gmu.Unlock()
+	if br == nil {
+		return
+	}
+	br.mu.Lock()
+	msgs := append([]Message(nil), br.messages[jidStr]...)
+	br.mu.Unlock()
+	sort.Slice(msgs, func(i, j int) bool { return msgs[i].Timestamp < msgs[j].Timestamp })
+	br.emit(map[string]interface{}{"type": "messages", "jid": jidStr, "messages": msgs})
+	go br.fetchProfile(jidStr)
+}
+
+func (br *bridge) fetchProfile(jidStr string) {
+	if br.client == nil {
+		return
+	}
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		return
+	}
+	prof := map[string]interface{}{"type": "profile", "jid": jidStr}
+	if jid.Server == types.GroupServer {
+		prof["isGroup"] = true
+		if gi, err := br.client.GetGroupInfo(br.ctx, jid); err == nil {
+			prof["name"] = gi.Name
+			prof["about"] = gi.Topic
+			prof["participants"] = len(gi.Participants)
+		} else {
+			prof["name"] = br.displayName(jid, "")
+		}
+	} else {
+		prof["isGroup"] = false
+		prof["name"] = br.displayName(jid, "")
+		prof["phone"] = "+" + jid.User
+		if infos, err := br.client.GetUserInfo(br.ctx, []types.JID{jid}); err == nil {
+			for _, ui := range infos {
+				prof["about"] = ui.Status
+				break
+			}
+		}
+	}
+	if pic, err := br.client.GetProfilePictureInfo(br.ctx, jid, &whatsmeow.GetProfilePictureParams{Preview: true}); err == nil && pic != nil {
+		prof["pictureURL"] = pic.URL
+	}
+	br.emit(prof)
+}
+
 // SendText sends a plain text message to the given JID (e.g. "123@s.whatsapp.net").
 func SendText(jidStr, text string) {
 	gmu.Lock()
@@ -337,7 +451,25 @@ func SendText(jidStr, text string) {
 	msg := &waProto.Message{Conversation: proto(text)}
 	ctx, cancel := context.WithTimeout(br.ctx, 30*time.Second)
 	defer cancel()
-	_, _ = br.client.SendMessage(ctx, jid, msg)
+	resp, sendErr := br.client.SendMessage(ctx, jid, msg)
+
+	ts := time.Now().Unix()
+	id := ""
+	if sendErr == nil {
+		ts = resp.Timestamp.Unix()
+		id = string(resp.ID)
+	} else {
+		br.logln("send error: " + sendErr.Error())
+	}
+	m := Message{ID: id, ChatJID: jidStr, Text: text, Timestamp: ts, FromMe: true, Kind: "text"}
+	br.mu.Lock()
+	br.messages[jidStr] = append(br.messages[jidStr], m)
+	br.mu.Unlock()
+	br.emit(map[string]interface{}{"type": "new_message", "message": m})
+	br.emit(map[string]interface{}{"type": "message", "chat": Chat{
+		JID: jidStr, Name: br.displayName(jid, ""), LastMessage: text,
+		Timestamp: ts, FromMe: true, IsGroup: jid.Server == types.GroupServer,
+	}})
 }
 
 // Logout unlinks the device and clears the local session.
@@ -363,6 +495,29 @@ func Stop() {
 }
 
 func proto(s string) *string { return &s }
+
+func messageKind(m *waProto.Message) string {
+	if m == nil {
+		return "text"
+	}
+	switch {
+	case m.GetImageMessage() != nil:
+		return "image"
+	case m.GetVideoMessage() != nil:
+		return "video"
+	case m.GetAudioMessage() != nil:
+		return "audio"
+	case m.GetDocumentMessage() != nil:
+		return "document"
+	case m.GetStickerMessage() != nil:
+		return "sticker"
+	case m.GetContactMessage() != nil:
+		return "contact"
+	case m.GetLocationMessage() != nil:
+		return "location"
+	}
+	return "text"
+}
 
 func extractText(m *waProto.Message) string {
 	if m == nil {

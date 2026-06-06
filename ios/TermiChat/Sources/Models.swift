@@ -40,6 +40,41 @@ struct Chat: Codable, Identifiable, Equatable {
     }
 }
 
+/// A single chat message (mirrors the Go `Message`).
+struct Message: Codable, Equatable {
+    let id: String
+    let chatJid: String
+    var text: String
+    var timestamp: Int64
+    var fromMe: Bool
+    var sender: String
+    var senderName: String
+    var kind: String
+
+    var date: Date { Date(timeIntervalSince1970: TimeInterval(timestamp)) }
+
+    var timeLabel: String {
+        guard timestamp > 0 else { return "" }
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f.string(from: date)
+    }
+
+    /// Stable key for ForEach (ids can be empty for optimistic local sends).
+    var rowKey: String { id.isEmpty ? "\(timestamp)-\(text.hashValue)" : id }
+}
+
+/// Contact / group profile (mirrors the Go `profile` event).
+struct Profile: Codable, Equatable {
+    var jid: String
+    var name: String?
+    var about: String?
+    var phone: String?
+    var isGroup: Bool?
+    var participants: Int?
+    var pictureURL: String?
+}
+
 /// Connection lifecycle as understood by the UI layer.
 enum ConnState: Equatable {
     case offline

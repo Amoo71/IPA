@@ -8,6 +8,7 @@ struct ChatListView: View {
     @State private var query: String = ""
     @State private var showArchived = false
     @State private var showSettings = false
+    @State private var selected: Chat?
 
     private var displayName: String {
         name.isEmpty ? String(jid.split(separator: "@").first ?? "me") : name
@@ -44,6 +45,15 @@ struct ChatListView: View {
             SettingsView(name: displayName, jid: jid)
                 .environmentObject(wa)
         }
+        .fullScreenCover(item: $selected) { chat in
+            ChatDetailView(chat: chat)
+                .environmentObject(wa)
+        }
+    }
+
+    private func row(_ chat: Chat) -> some View {
+        Button { selected = chat } label: { ChatRow(chat: chat) }
+            .buttonStyle(.plain)
     }
 
     // MARK: connected as: <name>   [settings]
@@ -153,11 +163,11 @@ struct ChatListView: View {
                 } else {
                     if !pinned.isEmpty {
                         sectionLabel("pinned")
-                        ForEach(pinned) { ChatRow(chat: $0) }
+                        ForEach(pinned) { row($0) }
                     }
                     if !regular.isEmpty {
                         if !pinned.isEmpty { sectionLabel("chats") }
-                        ForEach(regular) { ChatRow(chat: $0) }
+                        ForEach(regular) { row($0) }
                     }
                 }
             }
