@@ -23,6 +23,9 @@ struct ChatDetailView: View {
     @State private var showImagePicker = false
     @State private var showVideoPicker = false
     @State private var showDocImporter = false
+    @State private var showAudioImporter = false
+    @State private var showStickerPicker = false
+    @StateObject private var recorder = VoiceRecorder()
 
     private var accent: Color { chatTheme.accent(for: chat.jid) }
     private var resolved: ResolvedChatStyle { chatTheme.resolved(for: chat.jid) }
@@ -66,7 +69,18 @@ struct ChatDetailView: View {
         .onChange(of: videoItem) { item in send(item, kind: "video") }
         .fileImporter(isPresented: $showDocImporter,
                       allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
-            handleDocument(result)
+            handleDocument(result, kind: "document")
+        }
+        .fileImporter(isPresented: $showAudioImporter,
+                      allowedContentTypes: [.audio], allowsMultipleSelection: false) { result in
+            handleDocument(result, kind: "audio")
+        }
+        .sheet(isPresented: $showStickerPicker) {
+            StickerPickerView { path in
+                wa.sendSticker(to: chat.jid, path: path)
+                note("sending sticker…")
+            }
+            .environmentObject(wa)
         }
     }
 
@@ -160,50 +174,102 @@ struct ChatDetailView: View {
                     .padding(.top, 8)
             }
 
-            HStack(spacing: 8) {
-                // Attachments: photo / video / document.
-                Menu {
-                    Button { showImagePicker = true } label: { Label("Photo", systemImage: "photo") }
-                    Button { showVideoPicker = true } label: { Label("Video", systemImage: "video") }
-                    Button { showDocImporter = true } label: { Label("Document", systemImage: "doc") }
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(accent)
-                }
-
+            if recorder.isRecording {
+                recordingBar
+            } else {
                 HStack(spacing: 8) {
-                    Text(">")
-                        .font(Theme.mono(14, .bold))
-                        .foregroundColor(accent)
-                    TextField("", text: $draft,
-                              prompt: Text("message").foregroundColor(Theme.textFaint))
-                        .font(Theme.mono(14))
-                        .foregroundColor(Theme.text)
-                        .submitLabel(.send)
-                        .onSubmit(sendDraft)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(Theme.bg.opacity(0.9))
-                .clipShape(RoundedRectangle(cornerRadius: 20))
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Theme.line, lineWidth: 1))
+                    // Attachments: photo / video / sticker / audio / document.
+                    Menu {
+                        Button { showImagePicker = true } label: { Label("Photo", systemImage: "photo") }
+                        Button { showVideoPicker = true } label: { Label("Video", systemImage: "video") }
+                        Button { showStickerPicker = true } label: { Label("Sticker", systemImage: "face.smiling") }
+                        Button { showAudioImporter = true } label: { Label("Audio", systemImage: "music.note") }
+                        Button { showDocImporter = true } label: { Label("Document", systemImage: "doc") }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(accent)
+                    }
 
-                Button(action: sendDraft) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 30))
-                        .foregroundColor(canSend ? accent : Theme.textFaint)
+                    // Quick sticker shortcut.
+                    Button { showStickerPicker = true } label: {
+                        Image(systemName: "face.smiling")
+                            .font(.system(size: 22))
+                            .foregroundColor(accent)
+                    }
+
+                    HStack(spacing: 8) {
+                        Text(">")
+                            .font(Theme.mono(14, .bold))
+                            .foregroundColor(accent)
+                        TextField("", text: $draft,
+                                  prompt: Text("message").foregroundColor(Theme.textFaint))
+                            .font(Theme.mono(14))
+                            .foregroundColor(Theme.text)
+                            .submitLabel(.send)
+                            .onSubmit(sendDraft)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Theme.bg.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .overlay(RoundedRectangle(cornerRadius: 20).stroke(Theme.line, lineWidth: 1))
+
+                    if canSend {
+                        Button(action: sendDraft) {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 30))
+                                .foregroundColor(accent)
+                        }
+                    } else {
+                        // Empty draft → microphone for a voice note.
+                        Button { startRecording() } label: {
+                            Image(systemName: "mic.circle.fill")
+                                .font(.system(size: 30))
+                                .foregroundColor(accent)
+                        }
+                    }
                 }
-                .disabled(!canSend)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
         }
         .background(Theme.surface.opacity(0.92))
     }
 
     private var canSend: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    // MARK: voice recording
+
+    private var recordingBar: some View {
+        HStack(spacing: 14) {
+            Button { recorder.cancel() } label: {
+                Image(systemName: "trash.circle.fill")
+                    .font(.system(size: 30)).foregroundColor(Theme.warn)
+            }
+            Circle().fill(Color.red).frame(width: 10, height: 10)
+            Text("recording \(recorder.label)")
+                .font(Theme.mono(13)).foregroundColor(Theme.text)
+            Spacer()
+            Button { stopAndSendRecording() } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 30)).foregroundColor(accent)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private func startRecording() {
+        recorder.start(onDenied: { note("microphone access denied") })
+    }
+
+    private func stopAndSendRecording() {
+        guard let url = recorder.stop() else { note("recording too short"); return }
+        wa.sendMedia(to: chat.jid, path: url.path, kind: "voice")
+        note("sending voice…")
     }
 
     /// Quoted-message banner shown above the input while composing a reply.
@@ -269,7 +335,7 @@ struct ChatDetailView: View {
         }
     }
 
-    private func handleDocument(_ result: Result<[URL], Error>) {
+    private func handleDocument(_ result: Result<[URL], Error>, kind: String) {
         guard case .success(let urls) = result, let u = urls.first else { return }
         let access = u.startAccessingSecurityScopedResource()
         defer { if access { u.stopAccessingSecurityScopedResource() } }
@@ -277,8 +343,8 @@ struct ChatDetailView: View {
         let dst = FileManager.default.temporaryDirectory.appendingPathComponent(u.lastPathComponent)
         do {
             try data.write(to: dst)
-            wa.sendMedia(to: chat.jid, path: dst.path, kind: "document")
-            note("sending document…")
+            wa.sendMedia(to: chat.jid, path: dst.path, kind: kind)
+            note("sending \(kind)…")
         } catch {}
     }
 
@@ -305,9 +371,13 @@ private struct Bubble: View {
     private var accent: Color { style.accent }
     private var path: String? { wa.mediaPaths[msg.id].flatMap { $0.isEmpty ? nil : $0 } }
     private var isStarred: Bool { wa.starred.contains(msg.id) }
+    // Stickers render as the bare (transparent) image with just a timestamp —
+    // no bubble background or border.
+    private var isSticker: Bool { msg.kind == "sticker" }
     private var bubbleFill: Color {
-        msg.fromMe ? style.outBubble.opacity(style.outOpacity)
-                   : style.inBubble.opacity(style.inOpacity)
+        if isSticker { return .clear }
+        return msg.fromMe ? style.outBubble.opacity(style.outOpacity)
+                          : style.inBubble.opacity(style.inOpacity)
     }
 
     var body: some View {
@@ -345,14 +415,15 @@ private struct Bubble: View {
                         .foregroundColor(Theme.textFaint)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, isSticker ? 0 : 10)
+            .padding(.vertical, isSticker ? 0 : 7)
             .background(bubbleFill)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(msg.fromMe ? accent.opacity(0.35) : Theme.line, lineWidth: 1)
+                    .stroke(isSticker ? Color.clear : (msg.fromMe ? accent.opacity(0.35) : Theme.line),
+                            lineWidth: isSticker ? 0 : 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: isSticker ? 0 : 10))
             .contextMenu { contextMenu }
             if !msg.fromMe { Spacer(minLength: 40) }
         }

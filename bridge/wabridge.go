@@ -970,6 +970,16 @@ func SendMedia(jidStr, path, kind, caption string) {
 			return
 		}
 		mime := http.DetectContentType(data)
+		// Go's sniffer doesn't recognise WebP or m4a; force sensible MIME types
+		// for the kinds where it matters so stickers/audio send correctly.
+		switch kind {
+		case "sticker":
+			mime = "image/webp"
+		case "audio", "voice":
+			if !strings.HasPrefix(mime, "audio/") {
+				mime = "audio/mp4"
+			}
+		}
 		ctx, cancel := context.WithTimeout(br.ctx, 120*time.Second)
 		defer cancel()
 		up, err := br.client.Upload(ctx, data, uploadTypeForKind(kind, mime))
@@ -1098,6 +1108,14 @@ func buildMediaMessage(kind, mime, caption, filename string, up whatsmeow.Upload
 			Mimetype: proto(mime), Caption: capPtr,
 			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength,
 		}}
+	case "sticker":
+		animated := true
+		return &waProto.Message{StickerMessage: &waProto.StickerMessage{
+			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
+			Mimetype:      proto("image/webp"),
+			IsAnimated:    &animated,
+			FileEncSHA256: up.FileEncSHA256, FileSHA256: up.FileSHA256, FileLength: &up.FileLength,
+		}}
 	case "video", "gif":
 		vm := &waProto.VideoMessage{
 			URL: &up.URL, DirectPath: &up.DirectPath, MediaKey: up.MediaKey,
@@ -1153,6 +1171,70 @@ func Refresh() {
 			}
 		}
 	}()
+}
+
+// SetArchived archives/unarchives a chat on the server (app state) and updates
+// the local snapshot so the change sticks across restarts.
+func SetArchived(jidStr string, archived bool) {
+	br, jid, ok := resolveChat(jidStr)
+	if !ok {
+		return
+	}
+	ts := time.Now()
+	br.mu.Lock()
+	if c, ok := br.chats[jid.String()]; ok && c.Timestamp > 0 {
+		ts = time.Unix(c.Timestamp, 0)
+	}
+	br.mu.Unlock()
+	patch := appstate.BuildArchive(jid, archived, ts, nil)
+	if err := br.client.SendAppState(br.ctx, patch); err != nil {
+		br.logln("archive error: " + err.Error())
+	}
+	br.applyLocalFlag(jid, "archived", archived)
+}
+
+// SetPinned pins/unpins a chat.
+func SetPinned(jidStr string, pinned bool) {
+	br, jid, ok := resolveChat(jidStr)
+	if !ok {
+		return
+	}
+	if err := br.client.SendAppState(br.ctx, appstate.BuildPin(jid, pinned)); err != nil {
+		br.logln("pin error: " + err.Error())
+	}
+	br.applyLocalFlag(jid, "pinned", pinned)
+}
+
+// SetMuted mutes/unmutes a chat (mute is open-ended).
+func SetMuted(jidStr string, muted bool) {
+	br, jid, ok := resolveChat(jidStr)
+	if !ok {
+		return
+	}
+	if err := br.client.SendAppState(br.ctx, appstate.BuildMute(jid, muted, 0)); err != nil {
+		br.logln("mute error: " + err.Error())
+	}
+	br.applyLocalFlag(jid, "muted", muted)
+}
+
+func resolveChat(jidStr string) (*bridge, types.JID, bool) {
+	gmu.Lock()
+	br := b
+	gmu.Unlock()
+	if br == nil || br.client == nil {
+		return nil, types.JID{}, false
+	}
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		return nil, types.JID{}, false
+	}
+	return br, jid, true
+}
+
+// applyLocalFlag updates the cached snapshot and tells the UI immediately.
+func (br *bridge) applyLocalFlag(jid types.JID, flag string, value bool) {
+	br.updateChatFlag(jid.String(), flag, value)
+	br.emit(map[string]interface{}{"type": "chat_flags", "jid": jid.String(), flag: value})
 }
 
 // Logout unlinks the device and clears the local session.

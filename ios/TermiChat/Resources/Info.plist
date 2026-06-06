@@ -51,5 +51,7 @@
 	<string>TermiChat saves stickers, photos and videos you choose to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>TermiChat lets you attach photos and videos from your library to messages.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>TermiChat uses the microphone to record voice messages.</string>
 </dict>
 </plist>

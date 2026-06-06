@@ -59,13 +59,15 @@ struct MediaContent: View {
 
     @ViewBuilder
     private func imageView(maxW: CGFloat, maxH: CGFloat, rounded: Bool) -> some View {
-        if let p = path, AnimatedImage.load(p) != nil {
-            // AnimatedImage handles WebP / animated WebP / GIF / PNG / JPEG so
-            // stickers (incl. animated ones) render and move correctly.
+        if let p = path, let nat = AnimatedImage.pixelSize(p) {
+            // Size the view to the image's real aspect ratio so nothing is
+            // stretched or cut off. AnimatedImage handles WebP / animated WebP /
+            // GIF / PNG / JPEG (stickers incl. animated ones render and move).
+            let scale = min(maxW / max(nat.width, 1), maxH / max(nat.height, 1))
+            let w = max(48, nat.width * scale)
+            let h = max(48, nat.height * scale)
             AnimatedImage(path: p)
-                .frame(maxWidth: maxW, maxHeight: maxH)
-                .frame(minWidth: 80, minHeight: 80)
-                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: w, height: h)
                 .clipShape(RoundedRectangle(cornerRadius: rounded ? 12 : 0))
         } else {
             placeholder(label: msg.kind == "sticker" ? "sticker" : "image", icon: "photo")

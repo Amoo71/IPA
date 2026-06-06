@@ -45,6 +45,21 @@ struct AnimatedImage: UIViewRepresentable {
 
     struct Decoded { var still: UIImage?; var frames: [UIImage]?; var duration: TimeInterval }
 
+    /// Cheaply reads the pixel dimensions without decoding the whole image — used
+    /// to size the view with the correct aspect ratio (so stickers/images aren't
+    /// stretched or cut off).
+    static func pixelSize(_ path: String) -> CGSize? {
+        guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else {
+            return UIImage(contentsOfFile: path)?.size
+        }
+        guard let w = props[kCGImagePropertyPixelWidth] as? CGFloat,
+              let h = props[kCGImagePropertyPixelHeight] as? CGFloat, w > 0, h > 0 else {
+            return UIImage(contentsOfFile: path)?.size
+        }
+        return CGSize(width: w, height: h)
+    }
+
     /// Loads a still image, or an animated one (frames + total duration) when the
     /// file contains multiple frames.
     static func load(_ path: String) -> Decoded? {

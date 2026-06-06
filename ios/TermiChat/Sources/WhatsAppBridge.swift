@@ -103,6 +103,53 @@ final class WhatsAppBridge: NSObject, ObservableObject {
         #endif
     }
 
+    /// Send a sticker file (a .webp) to a chat.
+    func sendSticker(to jid: String, path: String) {
+        sendMedia(to: jid, path: path, kind: "sticker")
+    }
+
+    /// Local cache directory where decrypted media (incl. received stickers) live.
+    var mediaDirectory: String {
+        (dataDir as NSString).appendingPathComponent("media")
+    }
+
+    /// All `.webp` sticker files currently in the media cache (newest first) —
+    /// the pool the sticker picker draws from.
+    func stickerFiles() -> [String] {
+        let dir = mediaDirectory
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
+        let paths = names.filter { $0.lowercased().hasSuffix(".webp") }
+            .map { (dir as NSString).appendingPathComponent($0) }
+        return paths.sorted {
+            let a = (try? FileManager.default.attributesOfItem(atPath: $0)[.modificationDate]) as? Date ?? .distantPast
+            let b = (try? FileManager.default.attributesOfItem(atPath: $1)[.modificationDate]) as? Date ?? .distantPast
+            return a > b
+        }
+    }
+
+    // MARK: pin / archive / mute (optimistic + server)
+
+    func setPinned(_ jid: String, _ value: Bool) {
+        applyFlags(jid: jid, obj: ["pinned": value])
+        #if canImport(Wabridge)
+        WabridgeSetPinned(jid, value)
+        #endif
+    }
+
+    func setArchived(_ jid: String, _ value: Bool) {
+        applyFlags(jid: jid, obj: ["archived": value])
+        #if canImport(Wabridge)
+        WabridgeSetArchived(jid, value)
+        #endif
+    }
+
+    func setMuted(_ jid: String, _ value: Bool) {
+        applyFlags(jid: jid, obj: ["muted": value])
+        #if canImport(Wabridge)
+        WabridgeSetMuted(jid, value)
+        #endif
+    }
+
     /// Requests a fresh 8-char pairing code for the same phone number.
     func requestNewCode() {
         #if canImport(Wabridge)

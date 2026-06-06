@@ -63,6 +63,24 @@ struct ChatListView: View {
         }
         .buttonStyle(.plain)
         .onAppear { wa.loadAvatar(chat.jid) }
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button { wa.setPinned(chat.jid, !chat.pinned) } label: {
+                Label(chat.pinned ? "Unpin" : "Pin", systemImage: chat.pinned ? "pin.slash" : "pin")
+            }
+            .tint(Theme.accent)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button { wa.setArchived(chat.jid, !chat.archived) } label: {
+                Label(chat.archived ? "Unarchive" : "Archive",
+                      systemImage: chat.archived ? "tray.and.arrow.up" : "archivebox")
+            }
+            .tint(.indigo)
+            Button { wa.setMuted(chat.jid, !chat.muted) } label: {
+                Label(chat.muted ? "Unmute" : "Mute",
+                      systemImage: chat.muted ? "bell" : "bell.slash")
+            }
+            .tint(.gray)
+        }
     }
 
     // MARK: connected as: <name>   [settings]
