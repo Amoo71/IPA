@@ -146,10 +146,10 @@ private struct Bubble: View {
                 Text(msg.text.isEmpty ? "—" : msg.text)
                     .font(Theme.mono(13))
                     .foregroundColor(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(msg.timeLabel)
                     .font(Theme.mono(9))
                     .foregroundColor(Theme.textFaint)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
