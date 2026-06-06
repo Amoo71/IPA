@@ -4,6 +4,7 @@ import SwiftUI
 /// primary phone (Linked Devices → Link a Device → "Link with phone number").
 struct PairCodeView: View {
     let code: String
+    @EnvironmentObject var wa: WhatsAppBridge
     @State private var blink = false
 
     /// WhatsApp shows the 8-char code as "XXXX-XXXX".
@@ -56,6 +57,26 @@ struct PairCodeView: View {
                     .font(Theme.mono(11))
                     .foregroundColor(Theme.accent)
                     .opacity(blink ? 1 : 0)
+            }
+
+            // Live connection log — shows the real reason if linking fails.
+            if !wa.logs.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(wa.logs.suffix(8).enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(Theme.mono(9))
+                                .foregroundColor(Theme.textFaint)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+                .frame(maxHeight: 120)
+                .padding(10)
+                .background(Theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal, 16)
             }
 
             Spacer()

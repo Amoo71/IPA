@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow"
+	waCompanionReg "go.mau.fi/whatsmeow/proto/waCompanionReg"
 	waProto "go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -94,6 +96,24 @@ func emit(h EventHandler, v interface{}) {
 
 func (br *bridge) emit(v interface{}) { emit(br.handler, v) }
 
+// fwdLogger routes whatsmeow's logs into the in-app connection log so failures
+// (e.g. a rejected pairing) are visible under Settings → view connection log.
+type fwdLogger struct {
+	br     *bridge
+	module string
+}
+
+func (l fwdLogger) out(level, msg string, args ...interface{}) {
+	l.br.logln(fmt.Sprintf("[%s/%s] %s", level, l.module, fmt.Sprintf(msg, args...)))
+}
+func (l fwdLogger) Warnf(msg string, args ...interface{})  { l.out("warn", msg, args...) }
+func (l fwdLogger) Errorf(msg string, args ...interface{}) { l.out("error", msg, args...) }
+func (l fwdLogger) Infof(msg string, args ...interface{})  { l.out("info", msg, args...) }
+func (l fwdLogger) Debugf(msg string, args ...interface{}) {} // omitted: too noisy
+func (l fwdLogger) Sub(module string) waLog.Logger {
+	return fwdLogger{br: l.br, module: l.module + "." + module}
+}
+
 func (br *bridge) logln(line string) {
 	br.emit(map[string]interface{}{"type": "log", "line": line})
 }
@@ -116,7 +136,13 @@ func Start(dataDir string, handler EventHandler) {
 }
 
 func (br *bridge) run(dataDir string) {
-	dbLog := waLog.Stdout("DB", "WARN", true)
+	// Present as a normal Chrome web companion. WhatsApp rejects phone-number
+	// pairing when the platform is unknown (the whatsmeow default), so set a
+	// real browser identity that matches the PairPhone client type below.
+	store.DeviceProps.Os = proto("Chrome")
+	store.DeviceProps.PlatformType = waCompanionReg.DeviceProps_CHROME.Enum()
+
+	dbLog := fwdLogger{br: br, module: "db"}
 	dsn := fmt.Sprintf("file:%s/session.db?_foreign_keys=on&_pragma=journal_mode(WAL)", dataDir)
 	container, err := sqlstore.New(br.ctx, "sqlite3", dsn, dbLog)
 	if err != nil {
@@ -129,7 +155,7 @@ func (br *bridge) run(dataDir string) {
 		return
 	}
 
-	clientLog := waLog.Stdout("Client", "INFO", true)
+	clientLog := fwdLogger{br: br, module: "wa"}
 	client := whatsmeow.NewClient(deviceStore, clientLog)
 	br.client = client
 	client.AddEventHandler(br.eventHandler)
@@ -156,7 +182,7 @@ func (br *bridge) run(dataDir string) {
 			// Wait for the first QR event so the socket is fully established,
 			// then request a phone pairing code instead of showing a QR.
 			<-qrChan
-			code, err := client.PairPhone(br.ctx, phone, true, whatsmeow.PairClientSafari, "Safari (Mac OS)")
+			code, err := client.PairPhone(br.ctx, phone, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 			if err != nil {
 				br.logln("pair phone error: " + err.Error())
 				br.emit(map[string]interface{}{"type": "pair_error", "error": err.Error()})
