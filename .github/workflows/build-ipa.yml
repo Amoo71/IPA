@@ -1,0 +1,111 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bridge/**"
+      - "ios/**"
+      - ".github/workflows/build-ipa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.app/Contents/Developer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: bridge/go.sum
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Build Wabridge.xcframework (gomobile bind)
+        working-directory: bridge
+        run: |
+          set -euxo pipefail
+          gomobile init || true
+          mkdir -p ../ios/Frameworks
+          gomobile bind \
+            -target=ios \
+            -iosversion=15.0 \
+            -o ../ios/Frameworks/Wabridge.xcframework \
+            -v \
+            github.com/amoo71/ipa/bridge
+
+      - name: Inspect generated framework header
+        run: |
+          echo "::group::xcframework tree"
+          find ios/Frameworks/Wabridge.xcframework -maxdepth 3 -print
+          echo "::endgroup::"
+          echo "::group::Objective-C header"
+          find ios/Frameworks/Wabridge.xcframework -name "Wabridge.objc.h" -exec cat {} \; | head -200 || true
+          echo "::endgroup::"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build unsigned archive
+        working-directory: ios
+        run: |
+          set -euxo pipefail
+          xcodebuild \
+            -project TermiChat.xcodeproj \
+            -scheme TermiChat \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$PWD/build/TermiChat.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            2>&1 | tee xcodebuild.log || true
+          # Fail explicitly if the archive was not produced.
+          test -d "$PWD/build/TermiChat.xcarchive/Products/Applications/TermiChat.app"
+
+      - name: Package unsigned IPA
+        working-directory: ios
+        run: |
+          set -euxo pipefail
+          APP="$PWD/build/TermiChat.xcarchive/Products/Applications/TermiChat.app"
+          rm -rf "$PWD/build/Payload"
+          mkdir -p "$PWD/build/Payload"
+          cp -R "$APP" "$PWD/build/Payload/"
+          cd "$PWD/build"
+          zip -qry TermiChat.ipa Payload
+          ls -lh TermiChat.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TermiChat-ipa
+          path: ios/build/TermiChat.ipa
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ios/xcodebuild.log
+          if-no-files-found: ignore

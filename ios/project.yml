@@ -1,0 +1,50 @@
+name: TermiChat
+options:
+  bundleIdPrefix: com.termichat
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    ENABLE_BITCODE: NO
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  TermiChat:
+    type: application
+    platform: iOS
+    sources:
+      - path: TermiChat/Sources
+    dependencies:
+      - framework: Frameworks/Wabridge.xcframework
+        embed: true
+        codeSign: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.termichat.app
+        PRODUCT_NAME: TermiChat
+        INFOPLIST_FILE: TermiChat/Resources/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+
+schemes:
+  TermiChat:
+    build:
+      targets:
+        TermiChat: all
+    run:
+      config: Release
+    archive:
+      config: Release
