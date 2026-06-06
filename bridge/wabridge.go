@@ -73,8 +73,8 @@ type bridge struct {
 	handler   EventHandler
 	ctx       context.Context
 	cancel    context.CancelFunc
-	pushNames map[string]string // jid (user@server) -> push name
-	pairCh    chan [2]string    // {method, phone} selected by the UI
+	pushNames map[string]string    // jid (user@server) -> push name
+	pairCh    chan [2]string       // {method, phone} selected by the UI
 	messages  map[string][]Message // chat jid -> message history
 }
 
@@ -336,17 +336,11 @@ func (br *bridge) handleHistorySync(evt *events.HistorySync) {
 			IsGroup:  jid.Server == types.GroupServer,
 		}
 		if msgs := conv.GetMessages(); len(msgs) > 0 {
-			wm := msgs[0].GetMessage()
-			if wm != nil {
-				c.Timestamp = int64(wm.GetMessageTimestamp())
-				c.FromMe = wm.GetKey().GetFromMe()
-				c.LastMessage = extractText(wm.GetMessage())
-				if c.LastMessage == "" {
-					c.LastMessage = describeMessage(wm.GetMessage())
-				}
-			}
-			// Store the full (recent) history for this chat.
+			// Store the full (recent) history for this chat, tracking the most
+			// recent message so the list preview/ordering use the latest one
+			// (history-sync message order is not guaranteed newest-first).
 			var stored []Message
+			var latest *Message
 			for _, hsMsg := range msgs {
 				wm := hsMsg.GetMessage()
 				if wm == nil {
@@ -370,6 +364,15 @@ func (br *bridge) handleHistorySync(evt *events.HistorySync) {
 					m.SenderName = wm.GetPushName()
 				}
 				stored = append(stored, m)
+				if latest == nil || m.Timestamp > latest.Timestamp {
+					cp := m
+					latest = &cp
+				}
+			}
+			if latest != nil {
+				c.Timestamp = latest.Timestamp
+				c.FromMe = latest.FromMe
+				c.LastMessage = latest.Text
 			}
 			if len(stored) > 0 {
 				br.mu.Lock()
@@ -419,6 +422,28 @@ func RequestNewCode(phone string) {
 		br.logln("new pairing code issued")
 		br.emit(map[string]interface{}{"type": "pair_code", "code": code})
 	}
+}
+
+// FetchPicture asynchronously resolves a contact/group profile-picture URL and
+// emits a {type:"chat_picture", jid, url} event so the list can show avatars.
+func FetchPicture(jidStr string) {
+	gmu.Lock()
+	br := b
+	gmu.Unlock()
+	if br == nil || br.client == nil {
+		return
+	}
+	go func() {
+		jid, err := types.ParseJID(jidStr)
+		if err != nil {
+			return
+		}
+		pic, err := br.client.GetProfilePictureInfo(br.ctx, jid, &whatsmeow.GetProfilePictureParams{Preview: true})
+		if err != nil || pic == nil || pic.URL == "" {
+			return
+		}
+		br.emit(map[string]interface{}{"type": "chat_picture", "jid": jidStr, "url": pic.URL})
+	}()
 }
 
 func normalizePhone(s string) string {

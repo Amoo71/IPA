@@ -16,10 +16,6 @@ struct PairCodeView: View {
         return "\(c[..<i])-\(c[i...])"
     }
 
-    private var logText: String {
-        wa.logs.isEmpty ? "// no logs yet" : wa.logs.joined(separator: "\n")
-    }
-
     var body: some View {
         VStack(spacing: 18) {
             Spacer()
@@ -85,58 +81,19 @@ struct PairCodeView: View {
                 }
                 .disabled(requestingNew)
 
-                HStack(spacing: 10) {
-                    // Fix number — restart bridge so user can enter a different number
-                    Button { wa.resetToChoosing() } label: {
-                        Text("[ fix number ]")
-                            .font(Theme.mono(13))
-                            .foregroundColor(Theme.text)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 11)
-                            .background(Theme.surfaceHi)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line, lineWidth: 1))
-                    }
-
-                    // Share / copy the full connection log for debugging
-                    ShareLink(item: logText) {
-                        Text("[ share logs ]")
-                            .font(Theme.mono(13))
-                            .foregroundColor(Theme.text)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 11)
-                            .background(Theme.surfaceHi)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line, lineWidth: 1))
-                    }
+                // Fix number — restart bridge so user can enter a different number
+                Button { wa.resetToChoosing() } label: {
+                    Text("[ fix number ]")
+                        .font(Theme.mono(13))
+                        .foregroundColor(Theme.text)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(Theme.surfaceHi)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line, lineWidth: 1))
                 }
             }
             .padding(.horizontal, 24)
-
-            // Live connection log — shows real reason if linking fails
-            if !wa.logs.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(wa.logs.suffix(12).enumerated()), id: \.offset) { _, line in
-                            Text(line)
-                                .font(Theme.mono(9))
-                                .foregroundColor(Theme.textFaint)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-                .frame(maxHeight: 140)
-                .padding(10)
-                .background(Theme.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .padding(.horizontal, 16)
-            } else {
-                Text("// connecting — logs will appear here")
-                    .font(Theme.mono(10))
-                    .foregroundColor(Theme.textFaint)
-                    .padding(.horizontal, 16)
-            }
 
             Spacer()
         }

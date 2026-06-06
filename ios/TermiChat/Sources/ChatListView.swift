@@ -5,6 +5,7 @@ struct ChatListView: View {
     let jid: String
 
     @EnvironmentObject var wa: WhatsAppBridge
+    @EnvironmentObject var theme: ThemeManager
     @State private var query: String = ""
     @State private var showArchived = false
     @State private var showSettings = false
@@ -44,16 +45,21 @@ struct ChatListView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(name: displayName, jid: jid)
                 .environmentObject(wa)
+                .environmentObject(theme)
         }
         .fullScreenCover(item: $selected) { chat in
             ChatDetailView(chat: chat)
                 .environmentObject(wa)
+                .environmentObject(theme)
         }
     }
 
     private func row(_ chat: Chat) -> some View {
-        Button { selected = chat } label: { ChatRow(chat: chat) }
-            .buttonStyle(.plain)
+        Button { selected = chat } label: {
+            ChatRow(chat: chat, avatarURL: wa.avatars[chat.jid])
+        }
+        .buttonStyle(.plain)
+        .onAppear { wa.loadAvatar(chat.jid) }
     }
 
     // MARK: connected as: <name>   [settings]
@@ -202,10 +208,11 @@ struct ChatListView: View {
 
 private struct ChatRow: View {
     let chat: Chat
+    var avatarURL: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            avatar
+            Avatar(url: avatarURL, name: chat.display, isGroup: chat.isGroup, size: 38)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     if chat.pinned {
@@ -251,22 +258,5 @@ private struct ChatRow: View {
     private var preview: String {
         let body = chat.lastMessage.isEmpty ? "—" : chat.lastMessage
         return chat.fromMe ? "you: \(body)" : body
-    }
-
-    private var avatar: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Theme.surfaceHi)
-                .frame(width: 38, height: 38)
-            Text(chat.isGroup ? "#" : initials)
-                .font(Theme.mono(14, .bold))
-                .foregroundColor(Theme.accent)
-        }
-    }
-
-    private var initials: String {
-        let d = chat.display
-        let first = d.first.map { String($0) } ?? "?"
-        return first.uppercased()
     }
 }

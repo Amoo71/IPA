@@ -13,6 +13,9 @@ final class WhatsAppBridge: NSObject, ObservableObject {
     @Published var state: ConnState = .offline
     @Published private(set) var chats: [Chat] = []
     @Published var logs: [String] = []
+    @Published var avatars: [String: String] = [:]   // jid -> profile picture URL
+
+    private var avatarRequested = Set<String>()       // jids we've already fetched
 
     // Currently open conversation.
     @Published var openMessages: [Message] = []
@@ -54,6 +57,15 @@ final class WhatsAppBridge: NSObject, ObservableObject {
         if method == "phone" {
             DispatchQueue.main.async { self.state = .connecting }
         }
+    }
+
+    /// Lazily resolve a chat's profile-picture URL (once per jid per session).
+    func loadAvatar(_ jid: String) {
+        guard avatars[jid] == nil, !avatarRequested.contains(jid) else { return }
+        avatarRequested.insert(jid)
+        #if canImport(Wabridge)
+        WabridgeFetchPicture(jid)
+        #endif
     }
 
     /// Requests a fresh 8-char pairing code for the same phone number.
@@ -189,7 +201,12 @@ final class WhatsAppBridge: NSObject, ObservableObject {
             if let p = Self.decode(Profile.self, obj) {
                 DispatchQueue.main.async {
                     if p.jid == self.openJID { self.openProfile = p }
+                    if let url = p.pictureURL, !url.isEmpty { self.avatars[p.jid] = url }
                 }
+            }
+        case "chat_picture":
+            if let jid = obj["jid"] as? String, let url = obj["url"] as? String, !url.isEmpty {
+                DispatchQueue.main.async { self.avatars[jid] = url }
             }
         case "log":
             if let line = obj["line"] as? String {

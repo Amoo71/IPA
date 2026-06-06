@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @StateObject private var wa = WhatsAppBridge()
+    @StateObject private var theme = ThemeManager()
 
     var body: some View {
         ZStack {
@@ -20,8 +21,12 @@ struct RootView: View {
             }
         }
         .environmentObject(wa)
+        .environmentObject(theme)
         .preferredColorScheme(.dark)
         .onAppear { wa.start() }
+        // Recoloring bumps `version`, giving this subtree a new identity so
+        // every view re-reads Theme.* with the new palette.
+        .id(theme.version)
     }
 }
 

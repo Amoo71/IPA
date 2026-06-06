@@ -5,6 +5,7 @@ struct SettingsView: View {
     let jid: String
 
     @EnvironmentObject var wa: WhatsAppBridge
+    @EnvironmentObject var theme: ThemeManager
     @Environment(\.dismiss) private var dismiss
     @State private var showLogs = false
 
@@ -29,6 +30,8 @@ struct SettingsView: View {
                         field("user", name)
                         field("jid", jid)
                         field("session", "stored locally · e2e")
+
+                        themeSection
 
                         rowButton("view connection log") { showLogs.toggle() }
                         if showLogs {
@@ -73,6 +76,57 @@ struct SettingsView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    // MARK: theme
+
+    private var themeSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("── theme " + String(repeating: "─", count: 22))
+                .font(Theme.mono(10))
+                .foregroundColor(Theme.textFaint)
+
+            Text("accent")
+                .font(Theme.mono(10)).foregroundColor(Theme.textFaint)
+            // Preset swatches.
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 7), spacing: 10) {
+                ForEach(theme.presets, id: \.name) { preset in
+                    Button { theme.accent = preset.color } label: {
+                        Circle()
+                            .fill(preset.color)
+                            .frame(height: 26)
+                            .overlay(
+                                Circle().stroke(Theme.text.opacity(0.8),
+                                                lineWidth: preset.color.hexString == Theme.accent.hexString ? 2 : 0)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            ColorPicker(selection: Binding(get: { theme.accent }, set: { theme.accent = $0 }),
+                        supportsOpacity: false) {
+                Text("custom accent").font(Theme.mono(12)).foregroundColor(Theme.text)
+            }
+
+            ColorPicker(selection: Binding(get: { theme.background }, set: { theme.background = $0 }),
+                        supportsOpacity: false) {
+                Text("background").font(Theme.mono(12)).foregroundColor(Theme.text)
+            }
+
+            Button { theme.reset() } label: {
+                Text("[ reset theme ]")
+                    .font(Theme.mono(12))
+                    .foregroundColor(Theme.text)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Theme.surfaceHi)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     private func field(_ key: String, _ value: String) -> some View {

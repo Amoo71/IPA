@@ -7,6 +7,8 @@ struct ChatDetailView: View {
     @EnvironmentObject var wa: WhatsAppBridge
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ""
+    @State private var showProfile = false
+    @State private var notice: String?
 
     private var title: String { wa.openProfile?.name ?? chat.display }
 
@@ -32,6 +34,9 @@ struct ChatDetailView: View {
         .preferredColorScheme(.dark)
         .onAppear { wa.openChat(chat.jid) }
         .onDisappear { wa.closeChat() }
+        .sheet(isPresented: $showProfile) {
+            ProfileView(chat: chat).environmentObject(wa)
+        }
     }
 
     // MARK: header
@@ -43,18 +48,30 @@ struct ChatDetailView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(Theme.accent)
             }
-            Avatar(url: wa.openProfile?.pictureURL, name: title, isGroup: chat.isGroup, size: 38)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(Theme.mono(15, .bold))
-                    .foregroundColor(Theme.text)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(Theme.mono(10))
-                    .foregroundColor(Theme.textDim)
-                    .lineLimit(1)
+            // Tap the avatar/name to open the full profile.
+            Button { showProfile = true } label: {
+                HStack(spacing: 12) {
+                    Avatar(url: wa.openProfile?.pictureURL ?? wa.avatars[chat.jid],
+                           name: title, isGroup: chat.isGroup, size: 38)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                            .font(Theme.mono(15, .bold))
+                            .foregroundColor(Theme.text)
+                            .lineLimit(1)
+                        Text(subtitle)
+                            .font(Theme.mono(10))
+                            .foregroundColor(Theme.textDim)
+                            .lineLimit(1)
+                    }
+                }
             }
+            .buttonStyle(.plain)
             Spacer()
+            Button { showProfile = true } label: {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 17))
+                    .foregroundColor(Theme.accent)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -94,24 +111,68 @@ struct ChatDetailView: View {
     private var inputBar: some View {
         VStack(spacing: 0) {
             Divider().overlay(Theme.line)
+
+            if let notice {
+                Text(notice)
+                    .font(Theme.mono(10))
+                    .foregroundColor(Theme.textDim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+            }
+
             HStack(spacing: 8) {
-                Text(">")
-                    .font(Theme.mono(15, .bold))
-                    .foregroundColor(Theme.accent)
-                TextField("", text: $draft,
-                          prompt: Text("message").foregroundColor(Theme.textFaint))
-                    .font(Theme.mono(14))
-                    .foregroundColor(Theme.text)
-                    .submitLabel(.send)
-                    .onSubmit(sendDraft)
+                // Attachments: photo / gif / sticker / document.
+                Menu {
+                    Button { note("photo sending is coming soon") } label: {
+                        Label("Photo", systemImage: "photo")
+                    }
+                    Button { note("gif sending is coming soon") } label: {
+                        Label("GIF", systemImage: "rectangle.stack.badge.play")
+                    }
+                    Button { note("sticker sending is coming soon") } label: {
+                        Label("Sticker", systemImage: "face.smiling")
+                    }
+                    Button { note("document sending is coming soon") } label: {
+                        Label("Document", systemImage: "doc")
+                    }
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundColor(Theme.accent)
+                }
+
+                // Rounded text field with an inline sticker/emoji button.
+                HStack(spacing: 8) {
+                    Text(">")
+                        .font(Theme.mono(14, .bold))
+                        .foregroundColor(Theme.accent)
+                    TextField("", text: $draft,
+                              prompt: Text("message").foregroundColor(Theme.textFaint))
+                        .font(Theme.mono(14))
+                        .foregroundColor(Theme.text)
+                        .submitLabel(.send)
+                        .onSubmit(sendDraft)
+                    Button { note("stickers & gifs are coming soon") } label: {
+                        Image(systemName: "face.smiling")
+                            .font(.system(size: 18))
+                            .foregroundColor(Theme.textDim)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Theme.bg)
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Theme.line, lineWidth: 1))
+
                 Button(action: sendDraft) {
                     Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 26))
+                        .font(.system(size: 30))
                         .foregroundColor(canSend ? Theme.accent : Theme.textFaint)
                 }
                 .disabled(!canSend)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 12)
             .padding(.vertical, 10)
         }
         .background(Theme.surface)
@@ -125,6 +186,14 @@ struct ChatDetailView: View {
         guard canSend else { return }
         wa.send(to: chat.jid, text: draft)
         draft = ""
+    }
+
+    /// Show a transient one-line notice above the input bar.
+    private func note(_ text: String) {
+        withAnimation { notice = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            withAnimation { if notice == text { notice = nil } }
+        }
     }
 }
 
