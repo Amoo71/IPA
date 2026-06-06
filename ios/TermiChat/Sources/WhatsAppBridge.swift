@@ -39,6 +39,16 @@ final class WhatsAppBridge: NSObject, ObservableObject {
         #endif
     }
 
+    /// Selects the linking method after `need_pairing`. method = "qr" | "phone".
+    func pair(method: String, phone: String = "") {
+        #if canImport(Wabridge)
+        WabridgePair(method, phone)
+        #endif
+        if method == "phone" {
+            DispatchQueue.main.async { self.state = .connecting }
+        }
+    }
+
     func send(to jid: String, text: String) {
         #if canImport(Wabridge)
         WabridgeSendText(jid, text)
@@ -66,9 +76,23 @@ final class WhatsAppBridge: NSObject, ObservableObject {
               let type = obj["type"] as? String else { return }
 
         switch type {
+        case "need_pairing":
+            DispatchQueue.main.async {
+                if case .online = self.state {} else { self.state = .choosing }
+            }
         case "qr":
             if let code = obj["code"] as? String {
                 DispatchQueue.main.async { self.state = .linking(qr: code) }
+            }
+        case "pair_code":
+            if let code = obj["code"] as? String {
+                DispatchQueue.main.async { self.state = .pairingCode(code: code) }
+            }
+        case "pair_error":
+            let msg = (obj["error"] as? String) ?? "pairing failed"
+            DispatchQueue.main.async {
+                self.logs.append("pair_error: \(msg)")
+                self.state = .choosing
             }
         case "connected", "pair_success":
             let name = (obj["pushName"] as? String) ?? ""
@@ -79,8 +103,10 @@ final class WhatsAppBridge: NSObject, ObservableObject {
                 self.chats = []; self.index = [:]; self.state = .offline; self.started = false
             }
         case "disconnected":
+            // Only treat as a reconnect blip when we were actually online;
+            // don't disrupt the pairing screens.
             DispatchQueue.main.async {
-                if case .online = self.state {} else { self.state = .connecting }
+                if case .online = self.state { self.state = .connecting }
             }
         case "contact":
             if let jid = obj["jid"] as? String, let name = obj["name"] as? String {

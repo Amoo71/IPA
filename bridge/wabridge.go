@@ -59,6 +59,7 @@ type bridge struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	pushNames map[string]string // jid (user@server) -> push name
+	pairCh    chan [2]string    // {method, phone} selected by the UI
 }
 
 var (
@@ -93,7 +94,7 @@ func Start(dataDir string, handler EventHandler) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	br := &bridge{handler: handler, ctx: ctx, cancel: cancel, pushNames: map[string]string{}}
+	br := &bridge{handler: handler, ctx: ctx, cancel: cancel, pushNames: map[string]string{}, pairCh: make(chan [2]string, 1)}
 	b = br
 	gmu.Unlock()
 
@@ -120,17 +121,46 @@ func (br *bridge) run(dataDir string) {
 	client.AddEventHandler(br.eventHandler)
 
 	if client.Store.ID == nil {
-		// Not logged in: request a QR code for linking.
+		// Not logged in yet: ask the UI which method to use.
+		br.emit(map[string]interface{}{"type": "need_pairing"})
+		var choice [2]string
+		select {
+		case choice = <-br.pairCh:
+		case <-br.ctx.Done():
+			return
+		}
+		method, phone := choice[0], normalizePhone(choice[1])
+
+		// GetQRChannel must be called before Connect for both flows.
 		qrChan, _ := client.GetQRChannel(br.ctx)
 		if err := client.Connect(); err != nil {
 			br.logln("connect error: " + err.Error())
 			return
 		}
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				br.emit(map[string]interface{}{"type": "qr", "code": evt.Code})
+
+		if method == "phone" {
+			// Wait for the first QR event so the socket is fully established,
+			// then request a phone pairing code instead of showing a QR.
+			<-qrChan
+			code, err := client.PairPhone(br.ctx, phone, true, whatsmeow.PairClientSafari, "Safari (Mac OS)")
+			if err != nil {
+				br.logln("pair phone error: " + err.Error())
+				br.emit(map[string]interface{}{"type": "pair_error", "error": err.Error()})
 			} else {
-				br.logln("qr event: " + evt.Event)
+				br.emit(map[string]interface{}{"type": "pair_code", "code": code})
+			}
+			// Drain remaining QR events (ignored during code pairing).
+			go func() {
+				for range qrChan {
+				}
+			}()
+		} else {
+			for evt := range qrChan {
+				if evt.Event == "code" {
+					br.emit(map[string]interface{}{"type": "qr", "code": evt.Code})
+				} else {
+					br.logln("qr event: " + evt.Event)
+				}
 			}
 		}
 	} else {
@@ -264,6 +294,32 @@ func (br *bridge) handleHistorySync(evt *events.HistorySync) {
 	if len(chats) > 0 {
 		br.emit(map[string]interface{}{"type": "chats", "chats": chats})
 	}
+}
+
+// Pair selects the linking method after the bridge has emitted "need_pairing".
+// method is "qr" or "phone"; phone is the full international number (used only
+// when method == "phone", e.g. "491701234567").
+func Pair(method, phone string) {
+	gmu.Lock()
+	br := b
+	gmu.Unlock()
+	if br == nil {
+		return
+	}
+	select {
+	case br.pairCh <- [2]string{method, phone}:
+	default:
+	}
+}
+
+func normalizePhone(s string) string {
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			out = append(out, r)
+		}
+	}
+	return string(out)
 }
 
 // SendText sends a plain text message to the given JID (e.g. "123@s.whatsapp.net").

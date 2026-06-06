@@ -9,8 +9,12 @@ struct RootView: View {
             switch wa.state {
             case .offline, .connecting:
                 BootView(state: wa.state)
+            case .choosing:
+                LinkMethodView()
             case .linking(let qr):
                 QRLinkView(code: qr)
+            case .pairingCode(let code):
+                PairCodeView(code: code)
             case .online(let name, let jid):
                 ChatListView(name: name, jid: jid)
             }
@@ -29,13 +33,17 @@ private struct BootView: View {
     var body: some View {
         VStack(spacing: 18) {
             Spacer()
+            // Inner width is exactly 24 chars on every line so the right
+            // border stays aligned in the monospaced font.
             Text("""
             ┌────────────────────────┐
-            │      T E R M I C H A T  │
+            │   T E R M I C H A T    │
             └────────────────────────┘
             """)
             .font(Theme.mono(13))
             .foregroundColor(Theme.accent)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: true, vertical: false)
 
             HStack(spacing: 6) {
                 Text(statusText)

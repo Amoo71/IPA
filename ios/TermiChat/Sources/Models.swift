@@ -43,7 +43,9 @@ struct Chat: Codable, Identifiable, Equatable {
 /// Connection lifecycle as understood by the UI layer.
 enum ConnState: Equatable {
     case offline
-    case linking(qr: String)        // show QR code
     case connecting                 // session exists, dialing in
+    case choosing                   // ask user: phone number or QR
+    case linking(qr: String)        // show QR code
+    case pairingCode(code: String)  // show phone pairing code
     case online(name: String, jid: String)
 }
