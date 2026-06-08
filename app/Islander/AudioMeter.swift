@@ -5,6 +5,7 @@ import AVFoundation
 /// but it reacts to live sound and drives the equalizer/wave convincingly.
 final class AudioMeter {
     let bands: Int
+    var gain: Double = 9        // sensitivity multiplier
     private(set) var latest: [Double]
     private(set) var running = false
 
@@ -57,7 +58,7 @@ final class AudioMeter {
             for i in start..<end { let v = channel[i]; sum += v * v }
             let rms = sqrt(sum / Float(end - start))
             // Boost + clamp; quiet rooms still show a little life.
-            let level = min(1.0, Double(rms) * 9.0)
+            let level = min(1.0, Double(rms) * gain)
             // Exponential smoothing so bars fall back gently.
             smoothed[b] = max(level, smoothed[b] * 0.6)
             out[b] = smoothed[b]

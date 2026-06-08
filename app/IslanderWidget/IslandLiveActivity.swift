@@ -2,10 +2,10 @@ import ActivityKit
 import WidgetKit
 import SwiftUI
 
-/// The Live Activity. Provides the lock-screen banner and the full Dynamic
-/// Island presentation (compact leading/trailing = left/right, minimal, and the
-/// expanded layout). All content comes from `context.state`, which the app
-/// updates several times a second to animate.
+/// The Live Activity: lock-screen banner + the full Dynamic Island presentation
+/// (compact leading/trailing = left/right, minimal, expanded). All content comes
+/// from `context.state`, which the app updates to animate. A countdown, when set,
+/// is rendered with the system's native ticking text (no app updates needed).
 struct IslandLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: IslandAttributes.self) { context in
@@ -18,10 +18,14 @@ struct IslandLiveActivity: Widget {
             let accent = Color(hex: s.accentHex) ?? .green
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    ExpandedSide(state: s, leading: true)
+                    SlotView(state: s, leading: true, imageSize: 48, compact: false)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    ExpandedSide(state: s, leading: false)
+                    if let end = s.timerEnd {
+                        CountdownText(end: end, color: accent, size: 22)
+                    } else {
+                        SlotView(state: s, leading: false, imageSize: 48, compact: false)
+                    }
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(spacing: 1) {
@@ -34,54 +38,40 @@ struct IslandLiveActivity: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    AnimationView(anim: s.anim, levels: s.levels, phase: s.phase, color: accent, compact: false)
-                        .frame(height: 30)
-                        .padding(.horizontal, 6)
+                    if s.timerEnd == nil {
+                        AnimationView(anim: s.anim, levels: s.levels, phase: s.phase, color: accent, compact: false)
+                            .frame(height: 30).padding(.horizontal, 6)
+                    }
                 }
             } compactLeading: {
-                CompactSlot(state: s, leading: true)
+                SlotView(state: s, leading: true, imageSize: 24, compact: true)
             } compactTrailing: {
-                CompactSlot(state: s, leading: false)
+                if let end = s.timerEnd {
+                    CountdownText(end: end, color: accent, size: 14).frame(width: 44)
+                } else {
+                    SlotView(state: s, leading: false, imageSize: 24, compact: true)
+                }
             } minimal: {
-                MinimalSlot(state: s)
+                if let end = s.timerEnd {
+                    CountdownText(end: end, color: accent, size: 12).frame(width: 34)
+                } else {
+                    MinimalSlot(state: s)
+                }
             }
             .keylineTint(accent)
         }
     }
 }
 
-// MARK: - Regions
-
-private struct CompactSlot: View {
-    let state: IslandAttributes.ContentState
-    let leading: Bool
-
-    var body: some View {
-        let accent = Color(hex: state.accentHex) ?? .green
-        let active = leading ? (state.side == .left || state.side == .both)
-                             : (state.side == .right || state.side == .both)
-        let frame = leading ? state.leftFrame : state.rightFrame
-        Group {
-            if !active {
-                EmptyView()
-            } else if let f = frame {
-                FrameImageView(path: f, size: 24)
-            } else {
-                AnimationView(anim: state.anim, levels: state.levels, phase: state.phase,
-                              color: accent, compact: true)
-                    .frame(width: 36, height: 22)
-            }
-        }
-    }
-}
-
 private struct MinimalSlot: View {
     let state: IslandAttributes.ContentState
-
     var body: some View {
         let accent = Color(hex: state.accentHex) ?? .green
-        if let f = state.leftFrame ?? state.rightFrame {
+        if let f = state.leftFrame ?? state.rightFrame, !f.isEmpty, UIImage(contentsOfFile: f) != nil {
             FrameImageView(path: f, size: 20)
+        } else if !state.leftText.isEmpty || !state.rightText.isEmpty {
+            Text(state.leftText.isEmpty ? state.rightText : state.leftText)
+                .font(.system(size: 13, weight: .bold)).foregroundColor(accent).lineLimit(1)
         } else {
             AnimationView(anim: state.anim, levels: state.levels, phase: state.phase,
                           color: accent, compact: true)
@@ -90,36 +80,12 @@ private struct MinimalSlot: View {
     }
 }
 
-private struct ExpandedSide: View {
-    let state: IslandAttributes.ContentState
-    let leading: Bool
-
-    var body: some View {
-        let accent = Color(hex: state.accentHex) ?? .green
-        let active = leading ? (state.side == .left || state.side == .both)
-                             : (state.side == .right || state.side == .both)
-        let frame = leading ? state.leftFrame : state.rightFrame
-        Group {
-            if !active {
-                EmptyView()
-            } else if let f = frame {
-                FrameImageView(path: f, size: 48)
-            } else {
-                AnimationView(anim: state.anim, levels: state.levels, phase: state.phase,
-                              color: accent, compact: false)
-                    .frame(width: 60, height: 42)
-            }
-        }
-    }
-}
-
 private struct LockScreenView: View {
     let state: IslandAttributes.ContentState
-
     var body: some View {
         let accent = Color(hex: state.accentHex) ?? .green
         HStack(spacing: 12) {
-            if let f = state.leftFrame { FrameImageView(path: f, size: 46) }
+            SlotView(state: state, leading: true, imageSize: 46, compact: false)
             VStack(alignment: .leading, spacing: 4) {
                 if !state.title.isEmpty {
                     Text(state.title).font(.headline).foregroundColor(.white).lineLimit(1)
@@ -127,12 +93,16 @@ private struct LockScreenView: View {
                 if !state.subtitle.isEmpty {
                     Text(state.subtitle).font(.caption).foregroundColor(.white.opacity(0.7)).lineLimit(1)
                 }
-                AnimationView(anim: state.anim, levels: state.levels, phase: state.phase,
-                              color: accent, compact: false)
-                    .frame(height: 26)
+                if let end = state.timerEnd {
+                    CountdownText(end: end, color: accent, size: 18)
+                } else {
+                    AnimationView(anim: state.anim, levels: state.levels, phase: state.phase,
+                                  color: accent, compact: false)
+                        .frame(height: 26)
+                }
             }
             Spacer(minLength: 4)
-            if let f = state.rightFrame { FrameImageView(path: f, size: 46) }
+            SlotView(state: state, leading: false, imageSize: 46, compact: false)
         }
     }
 }

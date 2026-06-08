@@ -8,7 +8,7 @@ public enum IslandSide: String, Codable, Hashable, CaseIterable {
 
 /// The animation style rendered in the island.
 public enum IslandAnim: String, Codable, Hashable, CaseIterable {
-    case none, equalizer, wave, doubleWave, pulse
+    case none, equalizer, wave, doubleWave, pulse, ring, dots, heart
 
     public var label: String {
         switch self {
@@ -17,6 +17,22 @@ public enum IslandAnim: String, Codable, Hashable, CaseIterable {
         case .wave:       return "wave"
         case .doubleWave: return "call wave"
         case .pulse:      return "pulse"
+        case .ring:       return "ring"
+        case .dots:       return "dots"
+        case .heart:      return "heart"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .none:       return "circle"
+        case .equalizer:  return "waveform"
+        case .wave:       return "wave.3.right"
+        case .doubleWave: return "phone.fill"
+        case .pulse:      return "dot.radiowaves.left.and.right"
+        case .ring:       return "circle.dashed"
+        case .dots:       return "ellipsis"
+        case .heart:      return "heart.fill"
         }
     }
 }
@@ -36,18 +52,23 @@ public struct IslandAttributes: ActivityAttributes {
         public var phase: Double         // advancing phase for wave animations
         public var leftFrame: String?    // app-group file path for left image / gif frame
         public var rightFrame: String?   // app-group file path for right image / gif frame
+        public var leftText: String      // text / emoji shown on the left (optional)
+        public var rightText: String     // text / emoji shown on the right (optional)
         public var accentHex: String
+        public var timerEnd: Date?       // when set, the island shows a native live countdown
 
         public init(title: String = "", subtitle: String = "",
                     side: IslandSide = .both, anim: IslandAnim = .equalizer,
                     levels: [Double] = [], phase: Double = 0,
                     leftFrame: String? = nil, rightFrame: String? = nil,
-                    accentHex: String = "#2FEB8C") {
+                    leftText: String = "", rightText: String = "",
+                    accentHex: String = "#2FEB8C", timerEnd: Date? = nil) {
             self.title = title; self.subtitle = subtitle
             self.side = side; self.anim = anim
             self.levels = levels; self.phase = phase
             self.leftFrame = leftFrame; self.rightFrame = rightFrame
-            self.accentHex = accentHex
+            self.leftText = leftText; self.rightText = rightText
+            self.accentHex = accentHex; self.timerEnd = timerEnd
         }
     }
 
