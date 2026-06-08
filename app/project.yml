@@ -1,0 +1,71 @@
+name: Islander
+options:
+  bundleIdPrefix: com.islander
+  deploymentTarget:
+    iOS: "16.2"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    ENABLE_BITCODE: NO
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGN_IDENTITY: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+targets:
+  Islander:
+    type: application
+    platform: iOS
+    sources:
+      - path: Islander
+      - path: Shared
+    dependencies:
+      - target: IslanderWidget
+        embed: true
+        codeSign: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.islander.app
+        PRODUCT_NAME: Islander
+        INFOPLIST_FILE: Islander/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Islander/Islander.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+
+  IslanderWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: IslanderWidget
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.islander.app.widget
+        PRODUCT_NAME: IslanderWidget
+        INFOPLIST_FILE: IslanderWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: IslanderWidget/IslanderWidget.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+          - "@executable_path/../../Frameworks"
+
+schemes:
+  Islander:
+    build:
+      targets:
+        Islander: all
+    run:
+      config: Release
+    archive:
+      config: Release

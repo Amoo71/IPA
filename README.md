@@ -1,63 +1,54 @@
-# TermiChat
+# Islander — Dynamic Island controller
 
-A self-built, **CLI-themed WhatsApp client for iOS**. It links to your account
-through the official WhatsApp **multi-device (WhatsApp Web)** protocol — no
-subscription, no server, everything runs inside the app. Built to be sideloaded
-with **LiveContainer**.
+A SwiftUI app + Widget Extension that drives the iPhone's **Dynamic Island**
+via a **Live Activity** (ActivityKit). You can place content on the **left**,
+**right**, or **both** sides and show:
+
+- a **photo or GIF** (GIFs animate frame-by-frame)
+- a **Spotify-style equalizer**, a **wave**, a **call-style double wave**, or a **pulse**
+- an animation **driven by the live microphone** (reacts to sound)
+
+The in-app preview animates smoothly via `TimelineView`; the real island
+animates by pushing Live Activity content updates several times per second
+(self-running animations are ignored by the system, so data updates are the
+only way to move things in the island).
+
+## Reality check / limits
+
+- The Dynamic Island appears only on **iPhone 14 Pro and newer** (iOS 16.2+).
+- A third-party app **cannot** render a true real-time audio waveform like the
+  system's Now Playing / call UI. Updates are rate-limited, so mic/GIF motion is
+  as smooth as the update cadence allows (a few fps).
+- Live Activities need a **signed** install with the **App Group** and
+  **Live Activities** entitlements. Sign with **KSign** (or a dev account).
+  An unsigned LiveContainer install will **not** show the island.
+
+## Build / install
+
+CI (GitHub Actions, `macos-15`) builds an **unsigned** IPA on every push:
+`.github/workflows/build-ipa.yml` → artifact **`Islander-ipa`**.
+
+Then sign with KSign and make sure the **App Group** `group.com.islander.app`
+is enabled for both the app and the `IslanderWidget` extension.
+
+## Layout
 
 ```
-┌────────────────────────┐
-│      T E R M I C H A T  │
-└────────────────────────┘
-$ connected to whatsapp
+app/
+  project.yml                 XcodeGen project (app + widget extension)
+  Shared/                     code compiled into BOTH targets
+    IslandAttributes.swift    ActivityAttributes + ContentState
+    IslandShared.swift        App Group id + Color(hex:)
+    IslandVisuals.swift       bars / wave / pulse / frame views
+  Islander/                   the app (control panel)
+    IslanderApp.swift
+    RootView.swift            UI + live preview
+    IslandController.swift    Live Activity lifecycle + update loop
+    AudioMeter.swift          mic → amplitude bands
+    MediaImporter.swift       photo/GIF → frames in the App Group
+    Info.plist / *.entitlements
+  IslanderWidget/             the Live Activity / Dynamic Island
+    IslanderWidgetBundle.swift
+    IslandLiveActivity.swift
+    Info.plist / *.entitlements
 ```
-
-## What it does
-
-- Links to WhatsApp by scanning a QR code (Settings → Linked Devices), exactly
-  like WhatsApp Web — the session is stored **locally and encrypted** on device.
-- Shows your chats in a modern terminal aesthetic (monospaced font, dark
-  terminal palette, prompt-style UI):
-  - top bar: `connected as: <name>` + a `[ settings ]` button on the right
-  - a centered, rounded `> search` bar
-  - an `archived` row
-  - the chat list, with **pinned chats** floated to the top
-- Live incoming/outgoing messages, unread badges, pinned / archived / muted
-  state, group vs. direct chats.
-
-## How it is built
-
-| Layer | Tech |
-|-------|------|
-| WhatsApp connection | [`whatsmeow`](https://github.com/tulir/whatsmeow) (Go) compiled to a native iOS `Wabridge.xcframework` via `gomobile bind` |
-| UI | SwiftUI, monospaced, terminal theme |
-| Bridge | Go ↔ Swift events as JSON strings (`bridge/wabridge.go` ↔ `ios/.../WhatsAppBridge.swift`) |
-| Packaging | XcodeGen + `xcodebuild` → **unsigned `.ipa`** in GitHub Actions |
-
-```
-bridge/                 Go whatsmeow wrapper (gomobile-friendly)
-ios/                    SwiftUI app + XcodeGen project.yml
-.github/workflows/      build-ipa.yml  →  produces TermiChat.ipa
-```
-
-## Getting the IPA
-
-The IPA is built by the **Build IPA** GitHub Actions workflow (runs on every
-push to `main`, or trigger it manually via *Actions → Build IPA → Run workflow*).
-
-1. Open the workflow run → **Artifacts** → download `TermiChat-ipa`.
-2. Unzip to get `TermiChat.ipa`.
-3. Install it in **LiveContainer** (the IPA is intentionally unsigned;
-   LiveContainer provides the runtime/signing).
-4. Launch, open WhatsApp on your phone → **Settings → Linked Devices → Link a
-   Device**, and scan the QR shown in TermiChat.
-
-> The first sync pulls your recent chats via WhatsApp's history sync; pinned and
-> archived flags come straight from your account.
-
-## Notes & limits
-
-- This is an unofficial client. Use at your own risk; linking too many devices
-  or unusual activity can have account consequences.
-- History sync only provides *recent* conversations — older chats appear as new
-  messages arrive.
