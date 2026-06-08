@@ -224,7 +224,13 @@ final class IslandController: ObservableObject {
     }
 
     private func synth(_ now: Double) -> [Double] {
-        (0..<7).map { i in 0.15 + 0.85 * pow(abs(sin(now * 1.8 * speed + Double(i) * 0.55)), 1.6) }
+        var out = [Double](repeating: 0, count: 7)
+        for i in 0..<7 {
+            let angle: Double = now * 1.8 * speed + Double(i) * 0.55
+            let s: Double = abs(sin(angle))
+            out[i] = 0.15 + 0.85 * pow(s, 1.6)
+        }
+        return out
     }
 
     // MARK: countdown
