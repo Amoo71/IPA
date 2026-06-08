@@ -50,8 +50,8 @@ public struct IslandAttributes: ActivityAttributes {
         public var anim: IslandAnim
         public var levels: [Double]      // 0…1 bar / amplitude samples (mic or synthetic)
         public var phase: Double         // advancing phase for wave animations
-        public var leftFrame: String?    // app-group file path for left image / gif frame
-        public var rightFrame: String?   // app-group file path for right image / gif frame
+        public var leftImage: Data?      // small JPEG embedded directly (no App Group needed)
+        public var rightImage: Data?     // small JPEG embedded directly
         public var leftText: String      // text / emoji shown on the left (optional)
         public var rightText: String     // text / emoji shown on the right (optional)
         public var accentHex: String
@@ -60,13 +60,13 @@ public struct IslandAttributes: ActivityAttributes {
         public init(title: String = "", subtitle: String = "",
                     side: IslandSide = .both, anim: IslandAnim = .equalizer,
                     levels: [Double] = [], phase: Double = 0,
-                    leftFrame: String? = nil, rightFrame: String? = nil,
+                    leftImage: Data? = nil, rightImage: Data? = nil,
                     leftText: String = "", rightText: String = "",
                     accentHex: String = "#2FEB8C", timerEnd: Date? = nil) {
             self.title = title; self.subtitle = subtitle
             self.side = side; self.anim = anim
             self.levels = levels; self.phase = phase
-            self.leftFrame = leftFrame; self.rightFrame = rightFrame
+            self.leftImage = leftImage; self.rightImage = rightImage
             self.leftText = leftText; self.rightText = rightText
             self.accentHex = accentHex; self.timerEnd = timerEnd
         }

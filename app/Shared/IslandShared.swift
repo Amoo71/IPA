@@ -1,18 +1,6 @@
 import SwiftUI
 import UIKit
 
-/// Shared constants / helpers used by both the app and the widget extension.
-public enum IslandShared {
-    /// App Group used to share image / gif frames between the app and the widget.
-    /// The widget can only read media the app wrote here, so KSign must include
-    /// this group in the app + extension entitlements when signing.
-    public static let appGroup = "group.com.islander.app"
-
-    public static var containerURL: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
-    }
-}
-
 public extension Color {
     /// "#RRGGBB" or "RRGGBB".
     init?(hex: String) {

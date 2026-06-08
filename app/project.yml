@@ -34,7 +34,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.islander.app
         PRODUCT_NAME: Islander
         INFOPLIST_FILE: Islander/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Islander/Islander.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS:
@@ -52,7 +51,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.islander.app.widget
         PRODUCT_NAME: IslanderWidget
         INFOPLIST_FILE: IslanderWidget/Info.plist
-        CODE_SIGN_ENTITLEMENTS: IslanderWidget/IslanderWidget.entitlements
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS:

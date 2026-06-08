@@ -1,6 +1,7 @@
 import ActivityKit
 import WidgetKit
 import SwiftUI
+import UIKit
 
 /// The Live Activity: lock-screen banner + the full Dynamic Island presentation
 /// (compact leading/trailing = left/right, minimal, expanded). All content comes
@@ -67,8 +68,8 @@ private struct MinimalSlot: View {
     let state: IslandAttributes.ContentState
     var body: some View {
         let accent = Color(hex: state.accentHex) ?? .green
-        if let f = state.leftFrame ?? state.rightFrame, !f.isEmpty, UIImage(contentsOfFile: f) != nil {
-            FrameImageView(path: f, size: 20)
+        if let d = state.leftImage ?? state.rightImage, let ui = UIImage(data: d) {
+            FrameImageView(image: ui, size: 20)
         } else if !state.leftText.isEmpty || !state.rightText.isEmpty {
             Text(state.leftText.isEmpty ? state.rightText : state.leftText)
                 .font(.system(size: 13, weight: .bold)).foregroundColor(accent).lineLimit(1)

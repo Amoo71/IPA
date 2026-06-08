@@ -239,13 +239,13 @@ public struct SlotView: View {
         let accent = Color(hex: state.accentHex) ?? .green
         let active = leading ? (state.side == .left || state.side == .both)
                              : (state.side == .right || state.side == .both)
-        let frame = leading ? state.leftFrame : state.rightFrame
+        let imgData = leading ? state.leftImage : state.rightImage
         let text = leading ? state.leftText : state.rightText
         Group {
             if !active {
                 EmptyView()
-            } else if let f = frame, !f.isEmpty, UIImage(contentsOfFile: f) != nil {
-                FrameImageView(path: f, size: imageSize)
+            } else if let d = imgData, let ui = UIImage(data: d) {
+                FrameImageView(image: ui, size: imageSize)
             } else if !text.isEmpty {
                 Text(text)
                     .font(.system(size: compact ? 15 : 24, weight: .bold, design: .rounded))
@@ -280,16 +280,16 @@ public struct CountdownText: View {
     }
 }
 
-/// Renders one image / gif frame loaded from a file path (app-group container).
+/// Renders one image / gif / video frame (already decoded).
 public struct FrameImageView: View {
-    let path: String?
+    let image: UIImage?
     let size: CGFloat
 
-    public init(path: String?, size: CGFloat) { self.path = path; self.size = size }
+    public init(image: UIImage?, size: CGFloat) { self.image = image; self.size = size }
 
     public var body: some View {
         Group {
-            if let p = path, let ui = UIImage(contentsOfFile: p) {
+            if let ui = image {
                 Image(uiImage: ui).resizable().scaledToFill()
             } else {
                 RoundedRectangle(cornerRadius: size * 0.25).fill(Color.white.opacity(0.12))

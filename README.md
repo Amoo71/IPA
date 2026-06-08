@@ -19,17 +19,19 @@ only way to move things in the island).
 - A third-party app **cannot** render a true real-time audio waveform like the
   system's Now Playing / call UI. Updates are rate-limited, so mic/GIF motion is
   as smooth as the update cadence allows (a few fps).
-- Live Activities need a **signed** install with the **App Group** and
-  **Live Activities** entitlements. Sign with **KSign** (or a dev account).
-  An unsigned LiveContainer install will **not** show the island.
+- Media (photo/GIF/video frames) is embedded directly into the Live Activity as
+  small JPEGs (Apple caps the content at ~4KB, so island images are small) — so
+  **no App Group is required**. Just sign the app + extension with **KSign**
+  (or a dev account). An unsigned LiveContainer install will **not** show the
+  island, because the system won't load the widget extension.
 
 ## Build / install
 
 CI (GitHub Actions, `macos-15`) builds an **unsigned** IPA on every push:
 `.github/workflows/build-ipa.yml` → artifact **`Islander-ipa`**.
 
-Then sign with KSign and make sure the **App Group** `group.com.islander.app`
-is enabled for both the app and the `IslanderWidget` extension.
+Then sign the app **and** its embedded `IslanderWidget` extension with KSign.
+No App Group or other capabilities are needed.
 
 ## Layout
 
@@ -37,18 +39,18 @@ is enabled for both the app and the `IslanderWidget` extension.
 app/
   project.yml                 XcodeGen project (app + widget extension)
   Shared/                     code compiled into BOTH targets
-    IslandAttributes.swift    ActivityAttributes + ContentState
-    IslandShared.swift        App Group id + Color(hex:)
-    IslandVisuals.swift       bars / wave / pulse / frame views
+    IslandAttributes.swift    ActivityAttributes + ContentState (embeds JPEGs)
+    IslandShared.swift        Color(hex:)
+    IslandVisuals.swift       bars / wave / pulse / ring / dots / heart + slots
   Islander/                   the app (control panel)
     IslanderApp.swift
     RootView.swift            UI + live preview
-    IslandController.swift    Live Activity lifecycle + update loop
+    IslandController.swift    Live Activity lifecycle + battery-aware loop
     AudioMeter.swift          mic → amplitude bands
-    MediaImporter.swift       photo/GIF → frames in the App Group
-    Info.plist / *.entitlements
+    MediaImporter.swift       photo/GIF/video → in-memory frames → tiny JPEGs
+    Info.plist
   IslanderWidget/             the Live Activity / Dynamic Island
     IslanderWidgetBundle.swift
     IslandLiveActivity.swift
-    Info.plist / *.entitlements
+    Info.plist
 ```

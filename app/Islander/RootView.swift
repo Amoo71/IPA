@@ -96,13 +96,8 @@ struct RootView: View {
                     island.clearMedia(left: false)
                 }
             }
-            Text("Each side can show a photo, GIF or video, a text/emoji, or the animation. Priority: media → text → animation.")
+            Text("Each side can show a photo, GIF or video, a text/emoji, or the animation. Priority: media → text → animation. Media is embedded directly — no App Group needed.")
                 .font(.caption2).foregroundColor(.white.opacity(0.5))
-            if !island.appGroupOK {
-                Label("Enable App Group “group.com.islander.app” in KSign so the island can read your media.",
-                      systemImage: "exclamationmark.triangle")
-                    .font(.caption2).foregroundColor(.yellow)
-            }
         }
         .panel()
     }
@@ -265,7 +260,7 @@ struct RootView: View {
     }
 
     private var footer: some View {
-        Text("Dynamic Island needs iPhone 14 Pro+ (iOS 16.2+) and a signed install (KSign) with the App Group + Live Activities entitlements.")
+        Text("Dynamic Island needs iPhone 14 Pro+ (iOS 16.2+) and a signed install (KSign). No special entitlements required — media is embedded in the Live Activity.")
             .font(.caption2).foregroundColor(.white.opacity(0.4))
             .multilineTextAlignment(.center).padding(.top, 4)
     }

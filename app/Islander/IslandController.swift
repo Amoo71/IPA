@@ -52,14 +52,16 @@ final class IslandController: ObservableObject {
     @Published var countdownOn = false       { didSet { updateTimer() } }
     @Published var countdownMinutes: Double = 5
 
-    // Picker thumbnails (decoded directly from the picked data — always shows,
-    // even if the App Group container isn't available).
+    // Picker thumbnails.
     @Published var leftPreview: UIImage?
     @Published var rightPreview: UIImage?
-    @Published var appGroupOK = true
 
-    private var leftFrames: [String] = []
-    private var rightFrames: [String] = []
+    // Decoded source frames, and the budget-encoded JPEGs embedded into the
+    // Live Activity (no App Group / file sharing needed).
+    private var leftImages: [UIImage] = []
+    private var rightImages: [UIImage] = []
+    private var leftFrameData: [Data] = []
+    private var rightFrameData: [Data] = []
     private var timerEndDate: Date?
 
     private var activity: Activity<IslandAttributes>?
@@ -148,12 +150,12 @@ final class IslandController: ObservableObject {
     /// battery updating it.
     private var animationVisible: Bool {
         guard anim != .none else { return false }
-        let leftShows = (side == .left || side == .both) && leftFrames.isEmpty && leftText.isEmpty
-        let rightShows = (side == .right || side == .both) && rightFrames.isEmpty && rightText.isEmpty
+        let leftShows = (side == .left || side == .both) && leftImages.isEmpty && leftText.isEmpty
+        let rightShows = (side == .right || side == .both) && rightImages.isEmpty && rightText.isEmpty
         return leftShows || rightShows
     }
 
-    private var hasMovingFrames: Bool { leftFrames.count > 1 || rightFrames.count > 1 }
+    private var hasMovingFrames: Bool { leftFrameData.count > 1 || rightFrameData.count > 1 }
 
     private var isAnimated: Bool { animationVisible || hasMovingFrames }
 
@@ -201,7 +203,7 @@ final class IslandController: ObservableObject {
     func buildState() -> IslandAttributes.ContentState {
         let now = Date().timeIntervalSinceReferenceDate
         let levels: [Double]
-        if anim == .none && leftFrames.count <= 1 && rightFrames.count <= 1 {
+        if anim == .none && leftFrameData.count <= 1 && rightFrameData.count <= 1 {
             levels = []
         } else if meter.running {
             levels = meter.latest
@@ -211,16 +213,27 @@ final class IslandController: ObservableObject {
         return IslandAttributes.ContentState(
             title: title, subtitle: subtitle, side: side, anim: anim,
             levels: levels, phase: now * 2.0 * speed,
-            leftFrame: frame(leftFrames, now), rightFrame: frame(rightFrames, now),
+            leftImage: frame(leftFrameData, now), rightImage: frame(rightFrameData, now),
             leftText: leftText, rightText: rightText,
             accentHex: accent.hexString, timerEnd: timerEndDate)
     }
 
-    private func frame(_ frames: [String], _ now: Double) -> String? {
+    private func frame(_ frames: [Data], _ now: Double) -> Data? {
         guard !frames.isEmpty else { return nil }
         if frames.count == 1 { return frames[0] }
         let idx = Int(now * 12 * speed) % frames.count
         return frames[idx]
+    }
+
+    /// Re-encodes the source frames into JPEGs sized to share the ~4KB budget
+    /// between however many sides currently have media.
+    private func reencodeFrames() {
+        // Keep the whole ContentState safely under ActivityKit's ~4KB limit
+        // (base64 inflates Data by ~4/3, and there are other fields too).
+        let sides = (leftImages.isEmpty ? 0 : 1) + (rightImages.isEmpty ? 0 : 1)
+        let budget = sides >= 2 ? 1050 : 2200
+        leftFrameData = leftImages.compactMap { MediaImporter.encode($0, maxBytes: budget) }
+        rightFrameData = rightImages.compactMap { MediaImporter.encode($0, maxBytes: budget) }
     }
 
     private func synth(_ now: Double) -> [Double] {
@@ -246,21 +259,20 @@ final class IslandController: ObservableObject {
         status = "importing…"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let result = MediaImporter.importMedia(data: data, slot: left ? "left" : "right")
+            let result = MediaImporter.importMedia(data: data)
             DispatchQueue.main.async {
-                if left { self.leftFrames = result.paths; self.leftPreview = result.thumbnail }
-                else { self.rightFrames = result.paths; self.rightPreview = result.thumbnail }
-                self.appGroupOK = result.appGroupOK
-                self.status = result.paths.isEmpty ? "couldn't read that file"
-                    : (result.appGroupOK ? "live" : "imported — enable App Group in KSign so the island can read it")
+                if left { self.leftImages = result.frames; self.leftPreview = result.thumbnail }
+                else { self.rightImages = result.frames; self.rightPreview = result.thumbnail }
+                self.reencodeFrames()
+                self.status = result.frames.isEmpty ? "couldn't read that file" : "live"
                 self.applyNow()
             }
         }
     }
 
     func clearMedia(left: Bool) {
-        MediaImporter.clear(slot: left ? "left" : "right")
-        if left { leftFrames = []; leftPreview = nil } else { rightFrames = []; rightPreview = nil }
+        if left { leftImages = []; leftPreview = nil } else { rightImages = []; rightPreview = nil }
+        reencodeFrames()
         applyNow()
     }
 
